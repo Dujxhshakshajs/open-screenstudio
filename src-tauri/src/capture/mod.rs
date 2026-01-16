@@ -10,11 +10,8 @@ pub mod macos;
 #[cfg(target_os = "windows")]
 pub mod windows;
 
-// Re-export platform-specific modules
-#[cfg(target_os = "macos")]
-pub use macos::*;
+// Re-export traits
+pub use traits::{DisplayInfo, WindowInfo, WindowBounds, AudioDeviceInfo, CameraInfo, Resolution};
 
-#[cfg(target_os = "windows")]
-pub use windows::*;
-
-pub use traits::*;
+// Re-export permission functions from traits (which delegates to platform)
+pub use traits::{has_screen_recording_permission, request_screen_recording_permission};

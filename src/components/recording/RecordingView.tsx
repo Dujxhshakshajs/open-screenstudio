@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import {
   Circle,
   Square,
@@ -12,29 +13,103 @@ import {
   Volume2,
   VolumeX,
   Settings,
+  AlertCircle,
 } from "lucide-react";
 
 type RecordingState = "idle" | "recording" | "paused";
 
-interface SourceOption {
-  id: string;
+interface DisplayInfo {
+  id: number;
   name: string;
-  type: "display" | "window";
+  width: number;
+  height: number;
+  scaleFactor: number;
+  isPrimary: boolean;
+  refreshRate: number | null;
 }
 
 export default function RecordingView() {
   const [recordingState, setRecordingState] = useState<RecordingState>("idle");
-  const [selectedSource, setSelectedSource] = useState<string | null>(null);
+  const [selectedDisplayId, setSelectedDisplayId] = useState<number | null>(null);
   const [micEnabled, setMicEnabled] = useState(true);
   const [cameraEnabled, setCameraEnabled] = useState(true);
   const [systemAudioEnabled, setSystemAudioEnabled] = useState(true);
   const [recordingTime, setRecordingTime] = useState(0);
+  const [displays, setDisplays] = useState<DisplayInfo[]>([]);
+  const [hasPermission, setHasPermission] = useState<boolean | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  
+  const timerRef = useRef<number | null>(null);
+  const recordingStartTime = useRef<number>(0);
 
-  // Mock sources - will be populated from Tauri
-  const sources: SourceOption[] = [
-    { id: "display-1", name: "Main Display", type: "display" },
-    { id: "display-2", name: "External Display", type: "display" },
-  ];
+  // Load displays and check permission on mount
+  useEffect(() => {
+    const init = async () => {
+      // Load displays
+      try {
+        const displayList = await invoke<DisplayInfo[]>("get_displays");
+        setDisplays(displayList);
+        const primary = displayList.find((d) => d.isPrimary);
+        if (primary) {
+          setSelectedDisplayId(primary.id);
+        } else if (displayList.length > 0) {
+          setSelectedDisplayId(displayList[0].id);
+        }
+      } catch (err) {
+        console.error("Failed to load displays:", err);
+        setError("Failed to load displays");
+      }
+      
+      // Check permission
+      try {
+        const granted = await invoke<boolean>("check_screen_permission");
+        setHasPermission(granted);
+      } catch (err) {
+        console.error("Failed to check permission:", err);
+      }
+    };
+    
+    init();
+  }, []);
+
+  // Timer for recording duration
+  useEffect(() => {
+    if (recordingState === "recording") {
+      if (recordingStartTime.current === 0) {
+        recordingStartTime.current = Date.now();
+      }
+      timerRef.current = window.setInterval(() => {
+        setRecordingTime(Date.now() - recordingStartTime.current);
+      }, 100);
+    } else {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      if (recordingState === "idle") {
+        recordingStartTime.current = 0;
+      }
+    }
+
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+    };
+  }, [recordingState]);
+
+  const requestPermission = async () => {
+    try {
+      const granted = await invoke<boolean>("request_screen_permission");
+      setHasPermission(granted);
+      if (!granted) {
+        setError("Screen recording permission is required. Please allow in System Preferences.");
+      }
+    } catch (err) {
+      console.error("Failed to request permission:", err);
+    }
+  };
 
   const formatTime = (ms: number): string => {
     const totalSeconds = Math.floor(ms / 1000);
@@ -43,38 +118,127 @@ export default function RecordingView() {
     return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
   };
 
-  const handleStartRecording = () => {
-    if (!selectedSource) return;
-    setRecordingState("recording");
-    // TODO: Start actual recording via Tauri
+  const handleStartRecording = async () => {
+    if (selectedDisplayId === null) return;
+    
+    setError(null);
+    setIsLoading(true);
+    
+    try {
+      // Create output directory in temp
+      const outputDir = `/tmp/open-screenstudio-${Date.now()}`;
+      
+      await invoke("start_recording", {
+        config: {
+          displayId: selectedDisplayId,
+          captureSystemAudio: systemAudioEnabled,
+          captureMicrophone: micEnabled,
+          microphoneDeviceId: null,
+          captureWebcam: cameraEnabled,
+          webcamDeviceId: null,
+          trackInput: true,
+          outputDir,
+        },
+      });
+      
+      setRecordingState("recording");
+      setRecordingTime(0);
+    } catch (err) {
+      console.error("Failed to start recording:", err);
+      setError(String(err));
+      
+      // Check if permission error
+      if (String(err).includes("permission")) {
+        setHasPermission(false);
+      }
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const handleStopRecording = () => {
-    setRecordingState("idle");
-    setRecordingTime(0);
-    // TODO: Stop recording via Tauri
+  const handleStopRecording = async () => {
+    setIsLoading(true);
+    
+    try {
+      const result = await invoke("stop_recording");
+      console.log("Recording stopped:", result);
+      setRecordingState("idle");
+      setRecordingTime(0);
+    } catch (err) {
+      console.error("Failed to stop recording:", err);
+      setError(String(err));
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const handlePauseRecording = () => {
-    setRecordingState("paused");
-    // TODO: Pause recording via Tauri
+  const handlePauseRecording = async () => {
+    try {
+      await invoke("pause_recording");
+      setRecordingState("paused");
+    } catch (err) {
+      console.error("Failed to pause recording:", err);
+      setError(String(err));
+    }
   };
 
-  const handleResumeRecording = () => {
-    setRecordingState("recording");
-    // TODO: Resume recording via Tauri
+  const handleResumeRecording = async () => {
+    try {
+      await invoke("resume_recording");
+      setRecordingState("recording");
+    } catch (err) {
+      console.error("Failed to resume recording:", err);
+      setError(String(err));
+    }
   };
+
+  const selectedDisplay = displays.find((d) => d.id === selectedDisplayId);
 
   return (
     <div className="h-full flex flex-col">
+      {/* Error Banner */}
+      {error && (
+        <div className="bg-destructive/10 border-b border-destructive/20 px-4 py-2 flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 text-destructive" />
+          <span className="text-sm text-destructive">{error}</span>
+          <button
+            type="button"
+            onClick={() => setError(null)}
+            className="ml-auto text-destructive hover:text-destructive/80"
+          >
+            &times;
+          </button>
+        </div>
+      )}
+
+      {/* Permission Warning */}
+      {hasPermission === false && (
+        <div className="bg-yellow-500/10 border-b border-yellow-500/20 px-4 py-2 flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 text-yellow-500" />
+          <span className="text-sm text-yellow-500">
+            Screen recording permission required.
+          </span>
+          <button
+            type="button"
+            onClick={requestPermission}
+            className="ml-auto text-sm text-yellow-500 hover:text-yellow-400 underline"
+          >
+            Grant Permission
+          </button>
+        </div>
+      )}
+
       {/* Preview Area */}
       <div className="flex-1 flex items-center justify-center bg-muted/30 p-8">
         <div className="w-full max-w-4xl aspect-video bg-black/50 rounded-lg border border-border flex items-center justify-center relative overflow-hidden">
-          {selectedSource ? (
-            <div className="text-muted-foreground text-sm">
-              Preview of {sources.find((s) => s.id === selectedSource)?.name}
-              <br />
-              <span className="text-xs">(Preview will be implemented)</span>
+          {selectedDisplay ? (
+            <div className="text-muted-foreground text-sm text-center">
+              <p>Preview of {selectedDisplay.name}</p>
+              <p className="text-xs mt-1">
+                {selectedDisplay.width} x {selectedDisplay.height}
+                {selectedDisplay.refreshRate && ` @ ${selectedDisplay.refreshRate}Hz`}
+              </p>
+              <p className="text-xs mt-2">(Live preview will be implemented)</p>
             </div>
           ) : (
             <div className="text-center">
@@ -100,7 +264,7 @@ export default function RecordingView() {
           )}
 
           {/* Camera preview placeholder */}
-          {cameraEnabled && selectedSource && (
+          {cameraEnabled && selectedDisplay && (
             <div className="absolute bottom-4 right-4 w-32 aspect-video bg-muted rounded-lg border border-border flex items-center justify-center">
               <Camera className="w-6 h-6 text-muted-foreground" />
             </div>
@@ -116,15 +280,15 @@ export default function RecordingView() {
             <div className="flex items-center gap-2">
               <Monitor className="w-4 h-4 text-muted-foreground" />
               <select
-                value={selectedSource || ""}
-                onChange={(e) => setSelectedSource(e.target.value || null)}
+                value={selectedDisplayId ?? ""}
+                onChange={(e) => setSelectedDisplayId(e.target.value ? Number(e.target.value) : null)}
                 disabled={recordingState !== "idle"}
                 className="bg-muted border border-border rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
               >
                 <option value="">Select source...</option>
-                {sources.map((source) => (
-                  <option key={source.id} value={source.id}>
-                    {source.name}
+                {displays.map((display) => (
+                  <option key={display.id} value={display.id}>
+                    {display.name} ({display.width}x{display.height})
                   </option>
                 ))}
               </select>
@@ -206,11 +370,11 @@ export default function RecordingView() {
               <button
                 type="button"
                 onClick={handleStartRecording}
-                disabled={!selectedSource}
+                disabled={selectedDisplayId === null || isLoading}
                 className="flex items-center gap-2 bg-red-500 hover:bg-red-600 disabled:bg-red-500/50 text-white px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed"
               >
                 <Circle className="w-4 h-4 fill-current" />
-                <span>Start Recording</span>
+                <span>{isLoading ? "Starting..." : "Start Recording"}</span>
               </button>
             )}
 
@@ -227,10 +391,11 @@ export default function RecordingView() {
                 <button
                   type="button"
                   onClick={handleStopRecording}
+                  disabled={isLoading}
                   className="flex items-center gap-2 bg-muted hover:bg-muted/80 text-foreground px-4 py-2 rounded-lg transition-colors"
                 >
                   <Square className="w-4 h-4 fill-current" />
-                  <span>Stop</span>
+                  <span>{isLoading ? "Stopping..." : "Stop"}</span>
                 </button>
               </>
             )}
@@ -248,10 +413,11 @@ export default function RecordingView() {
                 <button
                   type="button"
                   onClick={handleStopRecording}
+                  disabled={isLoading}
                   className="flex items-center gap-2 bg-muted hover:bg-muted/80 text-foreground px-4 py-2 rounded-lg transition-colors"
                 >
                   <Square className="w-4 h-4 fill-current" />
-                  <span>Stop</span>
+                  <span>{isLoading ? "Stopping..." : "Stop"}</span>
                 </button>
               </>
             )}

@@ -2,7 +2,7 @@
 //!
 //! Defines the recording state machine and session tracking.
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 /// Current state of the recording system

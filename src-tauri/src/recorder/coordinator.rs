@@ -138,8 +138,9 @@ impl RecordingCoordinator {
         tracing::info!("Stopping recording");
         
         // End current session
+        let end_time = self.process_time_ms();
         if let Some(session) = self.sessions.last_mut() {
-            session.end(self.process_time_ms());
+            session.end(end_time);
         }
         
         // Stop all channels
@@ -188,8 +189,9 @@ impl RecordingCoordinator {
         tracing::info!("Pausing recording");
         
         // End current session
+        let end_time = self.process_time_ms();
         if let Some(session) = self.sessions.last_mut() {
-            session.end(self.process_time_ms());
+            session.end(end_time);
         }
         
         // Pause all channels

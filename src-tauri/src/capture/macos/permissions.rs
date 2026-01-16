@@ -2,11 +2,14 @@
 //!
 //! Handles screen recording and other permissions on macOS.
 
-use core_graphics::access::ScreenCaptureAccess;
-
 /// Check if screen recording permission is granted
 pub fn has_screen_recording_permission() -> bool {
-    ScreenCaptureAccess::preflight()
+    unsafe {
+        extern "C" {
+            fn CGPreflightScreenCaptureAccess() -> bool;
+        }
+        CGPreflightScreenCaptureAccess()
+    }
 }
 
 /// Request screen recording permission
@@ -15,7 +18,12 @@ pub fn has_screen_recording_permission() -> bool {
 /// Returns true if permission was already granted, false otherwise.
 /// Note: The actual permission dialog is shown by the system.
 pub fn request_screen_recording_permission() -> bool {
-    ScreenCaptureAccess::request()
+    unsafe {
+        extern "C" {
+            fn CGRequestScreenCaptureAccess() -> bool;
+        }
+        CGRequestScreenCaptureAccess()
+    }
 }
 
 /// Open System Preferences to the Screen Recording pane

@@ -3,9 +3,9 @@
 use crate::capture::traits::{DisplayInfo, has_screen_recording_permission, request_screen_recording_permission};
 use crate::recorder::state::{RecordingConfig, RecordingResult as RecordingOutput, RecordingState};
 use crate::recorder::RecordingCoordinator;
-use parking_lot::Mutex;
 use std::sync::Arc;
 use tauri::State;
+use tokio::sync::Mutex;
 
 /// Application state for recording
 pub struct RecorderState {
@@ -63,7 +63,7 @@ pub async fn start_recording(
         return Err("Screen recording permission not granted. Please allow in System Preferences and try again.".to_string());
     }
     
-    let mut coordinator = state.coordinator.lock();
+    let mut coordinator = state.coordinator.lock().await;
     
     // Clear existing channels and add display capture
     coordinator.clear_channels();
@@ -88,7 +88,7 @@ pub async fn start_recording(
 pub async fn stop_recording(
     state: State<'_, RecorderState>,
 ) -> Result<RecordingOutput, String> {
-    let mut coordinator = state.coordinator.lock();
+    let mut coordinator = state.coordinator.lock().await;
     coordinator.stop().await.map_err(|e| e.to_string())
 }
 
@@ -97,7 +97,7 @@ pub async fn stop_recording(
 pub async fn pause_recording(
     state: State<'_, RecorderState>,
 ) -> Result<(), String> {
-    let mut coordinator = state.coordinator.lock();
+    let mut coordinator = state.coordinator.lock().await;
     coordinator.pause().await.map_err(|e| e.to_string())
 }
 
@@ -106,7 +106,7 @@ pub async fn pause_recording(
 pub async fn resume_recording(
     state: State<'_, RecorderState>,
 ) -> Result<(), String> {
-    let mut coordinator = state.coordinator.lock();
+    let mut coordinator = state.coordinator.lock().await;
     coordinator.resume().await.map_err(|e| e.to_string())
 }
 
@@ -115,7 +115,7 @@ pub async fn resume_recording(
 pub async fn get_recording_state(
     state: State<'_, RecorderState>,
 ) -> Result<RecordingState, String> {
-    let coordinator = state.coordinator.lock();
+    let coordinator = state.coordinator.lock().await;
     Ok(coordinator.state())
 }
 
@@ -124,6 +124,6 @@ pub async fn get_recording_state(
 pub async fn get_recording_duration(
     state: State<'_, RecorderState>,
 ) -> Result<f64, String> {
-    let coordinator = state.coordinator.lock();
+    let coordinator = state.coordinator.lock().await;
     Ok(coordinator.duration_ms())
 }

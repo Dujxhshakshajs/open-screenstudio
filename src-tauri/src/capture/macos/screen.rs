@@ -6,7 +6,7 @@
 use crate::capture::traits::DisplayInfo;
 use crate::recorder::channel::{ChannelType, RecordingChannel, RecordingError, RecordingResult};
 use async_trait::async_trait;
-use core_graphics::display::{CGDisplay, CGDisplayMode};
+use core_graphics::display::CGDisplay;
 use parking_lot::Mutex;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -88,29 +88,6 @@ impl DisplayCaptureChannel {
         }
     }
     
-    /// Capture a single frame as PNG bytes
-    fn capture_frame(&self) -> Option<Vec<u8>> {
-        use core_graphics::display::CGDisplay;
-        use core_graphics::image::CGImageRef;
-        
-        let display = CGDisplay::new(self.display_id);
-        
-        // CGDisplayCreateImage captures the display
-        let image_ref = unsafe {
-            extern "C" {
-                fn CGDisplayCreateImage(display: u32) -> *mut core_graphics::sys::CGImage;
-            }
-            let ptr = CGDisplayCreateImage(self.display_id);
-            if ptr.is_null() {
-                return None;
-            }
-            core_graphics::image::CGImage::from_ptr(ptr)
-        };
-        
-        // For now, we'll save frame info instead of actual encoding
-        // Full implementation would encode to H.264/fMP4
-        Some(Vec::new())
-    }
 }
 
 #[async_trait]
@@ -150,7 +127,7 @@ impl RecordingChannel for DisplayCaptureChannel {
         self.is_recording.store(true, Ordering::SeqCst);
         
         let is_recording = self.is_recording.clone();
-        let display_id = self.display_id;
+        let _display_id = self.display_id;
         let session_index = self.session_index;
         let output_files = self.output_files.clone();
         
@@ -160,7 +137,7 @@ impl RecordingChannel for DisplayCaptureChannel {
             let frame_log_path = output_dir.join(format!("channel-display-{}-frames.log", session_index));
             let mut frame_log = std::fs::File::create(&frame_log_path).ok();
             
-            if let Some(ref mut log) = frame_log {
+            if frame_log.is_some() {
                 output_files.lock().push(frame_log_path.to_string_lossy().to_string());
             }
             
