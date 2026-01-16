@@ -28,18 +28,29 @@ interface DisplayInfo {
   refreshRate: number | null;
 }
 
+interface AudioDeviceInfo {
+  id: string;
+  name: string;
+  isInput: boolean;
+  isDefault: boolean;
+}
+
 export default function RecordingView() {
   const [recordingState, setRecordingState] = useState<RecordingState>("idle");
-  const [selectedDisplayId, setSelectedDisplayId] = useState<number | null>(null);
+  const [selectedDisplayId, setSelectedDisplayId] = useState<number | null>(
+    null,
+  );
   const [micEnabled, setMicEnabled] = useState(true);
+  const [selectedMicId, setSelectedMicId] = useState<string | null>(null);
   const [cameraEnabled, setCameraEnabled] = useState(true);
   const [systemAudioEnabled, setSystemAudioEnabled] = useState(true);
   const [recordingTime, setRecordingTime] = useState(0);
   const [displays, setDisplays] = useState<DisplayInfo[]>([]);
+  const [audioDevices, setAudioDevices] = useState<AudioDeviceInfo[]>([]);
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  
+
   const timerRef = useRef<number | null>(null);
   const recordingStartTime = useRef<number>(0);
 
@@ -60,7 +71,22 @@ export default function RecordingView() {
         console.error("Failed to load displays:", err);
         setError("Failed to load displays");
       }
-      
+
+      // Load audio devices
+      try {
+        const devices = await invoke<AudioDeviceInfo[]>("get_audio_devices");
+        setAudioDevices(devices);
+        // Select default mic
+        const defaultMic = devices.find((d) => d.isDefault);
+        if (defaultMic) {
+          setSelectedMicId(defaultMic.id);
+        } else if (devices.length > 0) {
+          setSelectedMicId(devices[0].id);
+        }
+      } catch (err) {
+        console.error("Failed to load audio devices:", err);
+      }
+
       // Check permission
       try {
         const granted = await invoke<boolean>("check_screen_permission");
@@ -69,7 +95,7 @@ export default function RecordingView() {
         console.error("Failed to check permission:", err);
       }
     };
-    
+
     init();
   }, []);
 
@@ -104,7 +130,9 @@ export default function RecordingView() {
       const granted = await invoke<boolean>("request_screen_permission");
       setHasPermission(granted);
       if (!granted) {
-        setError("Screen recording permission is required. Please allow in System Preferences.");
+        setError(
+          "Screen recording permission is required. Please allow in System Preferences.",
+        );
       }
     } catch (err) {
       console.error("Failed to request permission:", err);
@@ -120,33 +148,33 @@ export default function RecordingView() {
 
   const handleStartRecording = async () => {
     if (selectedDisplayId === null) return;
-    
+
     setError(null);
     setIsLoading(true);
-    
+
     try {
       // Create output directory in temp
       const outputDir = `/tmp/open-screenstudio-${Date.now()}`;
-      
+
       await invoke("start_recording", {
         config: {
           displayId: selectedDisplayId,
           captureSystemAudio: systemAudioEnabled,
           captureMicrophone: micEnabled,
-          microphoneDeviceId: null,
+          microphoneDeviceId: micEnabled ? selectedMicId : null,
           captureWebcam: cameraEnabled,
           webcamDeviceId: null,
           trackInput: true,
           outputDir,
         },
       });
-      
+
       setRecordingState("recording");
       setRecordingTime(0);
     } catch (err) {
       console.error("Failed to start recording:", err);
       setError(String(err));
-      
+
       // Check if permission error
       if (String(err).includes("permission")) {
         setHasPermission(false);
@@ -158,7 +186,7 @@ export default function RecordingView() {
 
   const handleStopRecording = async () => {
     setIsLoading(true);
-    
+
     try {
       const result = await invoke("stop_recording");
       console.log("Recording stopped:", result);
@@ -236,7 +264,8 @@ export default function RecordingView() {
               <p>Preview of {selectedDisplay.name}</p>
               <p className="text-xs mt-1">
                 {selectedDisplay.width} x {selectedDisplay.height}
-                {selectedDisplay.refreshRate && ` @ ${selectedDisplay.refreshRate}Hz`}
+                {selectedDisplay.refreshRate &&
+                  ` @ ${selectedDisplay.refreshRate}Hz`}
               </p>
               <p className="text-xs mt-2">(Live preview will be implemented)</p>
             </div>
@@ -281,7 +310,11 @@ export default function RecordingView() {
               <Monitor className="w-4 h-4 text-muted-foreground" />
               <select
                 value={selectedDisplayId ?? ""}
-                onChange={(e) => setSelectedDisplayId(e.target.value ? Number(e.target.value) : null)}
+                onChange={(e) =>
+                  setSelectedDisplayId(
+                    e.target.value ? Number(e.target.value) : null,
+                  )
+                }
                 disabled={recordingState !== "idle"}
                 className="bg-muted border border-border rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
               >
@@ -296,23 +329,45 @@ export default function RecordingView() {
 
             {/* Audio/Video toggles */}
             <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => setMicEnabled(!micEnabled)}
-                disabled={recordingState !== "idle"}
-                className={`p-2 rounded-md transition-colors ${
-                  micEnabled
-                    ? "bg-accent text-accent-foreground"
-                    : "text-muted-foreground hover:bg-muted"
-                } disabled:opacity-50`}
-                title={micEnabled ? "Disable Microphone" : "Enable Microphone"}
-              >
-                {micEnabled ? (
-                  <Mic className="w-4 h-4" />
-                ) : (
-                  <MicOff className="w-4 h-4" />
+              <div className="flex items-center">
+                <button
+                  type="button"
+                  onClick={() => setMicEnabled(!micEnabled)}
+                  disabled={recordingState !== "idle"}
+                  className={`p-2 rounded-l-md transition-colors ${
+                    micEnabled
+                      ? "bg-accent text-accent-foreground"
+                      : "text-muted-foreground hover:bg-muted"
+                  } disabled:opacity-50`}
+                  title={
+                    micEnabled ? "Disable Microphone" : "Enable Microphone"
+                  }
+                >
+                  {micEnabled ? (
+                    <Mic className="w-4 h-4" />
+                  ) : (
+                    <MicOff className="w-4 h-4" />
+                  )}
+                </button>
+                {micEnabled && audioDevices.length > 0 && (
+                  <select
+                    value={selectedMicId ?? ""}
+                    onChange={(e) => setSelectedMicId(e.target.value || null)}
+                    disabled={recordingState !== "idle"}
+                    className="bg-muted border-l border-border rounded-r-md px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50 max-w-[120px]"
+                    title="Select Microphone"
+                  >
+                    {audioDevices.map((device) => (
+                      <option key={device.id} value={device.id}>
+                        {device.name.length > 20
+                          ? device.name.substring(0, 20) + "..."
+                          : device.name}
+                        {device.isDefault ? " (Default)" : ""}
+                      </option>
+                    ))}
+                  </select>
                 )}
-              </button>
+              </div>
 
               <button
                 type="button"
