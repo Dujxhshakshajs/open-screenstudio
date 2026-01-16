@@ -321,7 +321,21 @@ impl RecordingChannel for DisplayCaptureChannel {
             RecordingError::ConfigurationError("Output directory not set".to_string())
         })?;
 
-        // Create FFmpeg encoder
+        // Capture first frame to determine actual dimensions
+        let (first_frame, actual_width, actual_height) = capture_display_frame(self.display_id)
+            .ok_or_else(|| RecordingError::CaptureError("Failed to capture initial frame".to_string()))?;
+        
+        // Update dimensions to match actual capture
+        self.width = actual_width;
+        self.height = actual_height;
+        
+        tracing::info!(
+            "Actual capture dimensions: {}x{} (from first frame)",
+            actual_width,
+            actual_height
+        );
+
+        // Create FFmpeg encoder with actual dimensions
         let encoder = Arc::new(
             FFmpegSegmentEncoder::new(
                 self.width,
@@ -332,8 +346,14 @@ impl RecordingChannel for DisplayCaptureChannel {
             )
             .map_err(|e| RecordingError::CaptureError(format!("Failed to start FFmpeg: {}", e)))?,
         );
+        
+        // Write the first frame
+        let expected_size = (self.width * self.height * 4) as usize;
+        if first_frame.len() >= expected_size {
+            encoder.write_frame(&first_frame[..expected_size]);
+        }
+        
         self.encoder = Some(encoder.clone());
-
         self.is_recording.store(true, Ordering::SeqCst);
 
         // Start capture loop in background task
@@ -350,25 +370,10 @@ impl RecordingChannel for DisplayCaptureChannel {
             while is_recording.load(Ordering::SeqCst) {
                 let start = std::time::Instant::now();
 
-                // Capture frame - returns actual captured dimensions
-                if let Some((data, captured_w, captured_h)) = capture_display_frame(display_id) {
-                    let captured_size = (captured_w * captured_h * 4) as usize;
-                    
-                    // Verify dimensions match what FFmpeg expects
-                    if captured_w == width && captured_h == height && data.len() >= expected_size {
+                // Capture frame
+                if let Some((data, _w, _h)) = capture_display_frame(display_id) {
+                    if data.len() >= expected_size {
                         encoder.write_frame(&data[..expected_size]);
-                    } else if data.len() >= captured_size {
-                        // Dimensions don't match - this shouldn't happen if initialized correctly
-                        tracing::warn!(
-                            "Frame dimensions mismatch: {}x{} vs expected {}x{}, skipping frame",
-                            captured_w, captured_h, width, height
-                        );
-                    } else {
-                        tracing::warn!(
-                            "Frame data size mismatch: {} vs expected {}",
-                            data.len(),
-                            expected_size
-                        );
                     }
                 }
 
