@@ -53,6 +53,8 @@ core-foundation = "0.10"
 core-graphics = "0.24"
 cocoa = "0.26"
 dispatch = "0.2"
+screencapturekit = "1.5"
+screencapturekit-sys = "0.2"
 
 # Platform: Windows
 [target.'cfg(target_os = "windows")'.dependencies]
