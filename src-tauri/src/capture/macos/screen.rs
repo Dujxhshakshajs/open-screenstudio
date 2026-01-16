@@ -49,12 +49,20 @@ pub fn get_displays() -> Vec<DisplayInfo> {
         .collect()
 }
 
+/// Get the native (pixel) resolution of a display
+fn get_native_resolution(display_id: u32) -> (u32, u32) {
+    let display = CGDisplay::new(display_id);
+    // pixels_wide/pixels_high gives the actual pixel dimensions (Retina resolution)
+    (display.pixels_wide() as u32, display.pixels_high() as u32)
+}
+
 /// Capture a single frame from a display using CGDisplayCreateImage
 fn capture_display_frame(display_id: u32) -> Option<(Vec<u8>, u32, u32)> {
     let display = CGDisplay::new(display_id);
     let bounds = display.bounds();
 
     // Create image of the entire display
+    // This captures at native (Retina) resolution automatically
     let image = CGDisplay::screenshot(
         bounds,
         kCGWindowListOptionOnScreenOnly,
@@ -124,10 +132,10 @@ impl FFmpegSegmentEncoder {
                 "-framerate", &fps.to_string(),
                 "-i", "-",                       // Read from stdin
                 "-c:v", "libx264",               // H.264 codec
-                "-preset", "ultrafast",          // Fast encoding for real-time
+                "-preset", "veryfast",           // Good balance of speed and compression
                 "-tune", "zerolatency",          // Low latency
                 "-pix_fmt", "yuv420p",           // Output pixel format
-                "-crf", "23",                    // Quality (lower = better, 23 is default)
+                "-crf", "18",                    // High quality (lower = better, 18 is visually lossless)
                 "-g", &(fps * 2).to_string(),    // GOP size = 2 seconds
                 "-keyint_min", &fps.to_string(), // Min keyframe interval
                 "-sc_threshold", "0",            // Disable scene change detection
@@ -304,11 +312,10 @@ impl RecordingChannel for DisplayCaptureChannel {
             ));
         }
 
-        // Get display info for resolution
-        let display = CGDisplay::new(self.display_id);
-        let bounds = display.bounds();
-        self.width = bounds.size.width as u32;
-        self.height = bounds.size.height as u32;
+        // Get display info for resolution - use native (pixel) resolution for Retina displays
+        let (native_width, native_height) = get_native_resolution(self.display_id);
+        self.width = native_width;
+        self.height = native_height;
 
         self.output_dir = Some(output_dir.to_path_buf());
         self.session_index = session_index;
@@ -360,11 +367,20 @@ impl RecordingChannel for DisplayCaptureChannel {
             while is_recording.load(Ordering::SeqCst) {
                 let start = std::time::Instant::now();
 
-                // Capture frame
-                if let Some((data, _w, _h)) = capture_display_frame(display_id) {
-                    // Write frame to FFmpeg
-                    if data.len() >= expected_size {
+                // Capture frame - returns actual captured dimensions
+                if let Some((data, captured_w, captured_h)) = capture_display_frame(display_id) {
+                    let captured_size = (captured_w * captured_h * 4) as usize;
+                    
+                    // Verify dimensions match what FFmpeg expects
+                    if captured_w == width && captured_h == height && data.len() >= expected_size {
                         encoder.write_frame(&data[..expected_size]);
+                    } else if data.len() >= captured_size {
+                        // Dimensions changed (rare) - log warning but still try to write
+                        tracing::warn!(
+                            "Frame dimensions changed: {}x{} vs expected {}x{}",
+                            captured_w, captured_h, width, height
+                        );
+                        // This will likely cause FFmpeg issues, but let's not crash
                     } else {
                         tracing::warn!(
                             "Frame size mismatch: {} vs expected {}",
