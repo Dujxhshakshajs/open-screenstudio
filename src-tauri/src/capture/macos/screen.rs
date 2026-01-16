@@ -115,14 +115,14 @@ impl FFmpegSegmentEncoder {
         // Create output directory if it doesn't exist
         std::fs::create_dir_all(output_dir)?;
 
-        let segment_pattern = output_dir
-            .join(format!("segment-{segment_index}-%03d.mp4"))
+        let output_file = output_dir
+            .join(format!("recording-{segment_index}.mp4"))
             .to_string_lossy()
             .to_string();
 
-        // Start FFmpeg process for segmented output
+        // Start FFmpeg process for MP4 output
         // Input: raw BGRA frames from stdin
-        // Output: HLS-compatible fMP4 segments
+        // Output: H.264 encoded MP4
         let process = Command::new("ffmpeg")
             .args([
                 "-y",                            // Overwrite output
@@ -133,18 +133,11 @@ impl FFmpegSegmentEncoder {
                 "-i", "-",                       // Read from stdin
                 "-c:v", "libx264",               // H.264 codec
                 "-preset", "veryfast",           // Good balance of speed and compression
-                "-tune", "zerolatency",          // Low latency
-                "-pix_fmt", "yuv420p",           // Output pixel format
+                "-pix_fmt", "yuv420p",           // Output pixel format (required for compatibility)
                 "-crf", "18",                    // High quality (lower = better, 18 is visually lossless)
                 "-g", &(fps * 2).to_string(),    // GOP size = 2 seconds
-                "-keyint_min", &fps.to_string(), // Min keyframe interval
-                "-sc_threshold", "0",            // Disable scene change detection
-                "-f", "segment",                 // Segment muxer
-                "-segment_time", "2",            // 2-second segments
-                "-segment_format", "mp4",        // MP4 format
-                "-reset_timestamps", "1",
-                "-movflags", "+faststart+frag_keyframe+empty_moov",
-                &segment_pattern,
+                "-movflags", "+faststart",       // Move moov atom to start for streaming
+                &output_file,
             ])
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
@@ -203,27 +196,24 @@ impl FFmpegSegmentEncoder {
             }
         }
 
-        // Find all generated segment files
-        let mut segments = Vec::new();
-        if let Ok(entries) = std::fs::read_dir(&self.output_dir) {
-            for entry in entries.flatten() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if name.starts_with(&format!("segment-{}-", self.segment_index))
-                    && name.ends_with(".mp4")
-                {
-                    segments.push(entry.path().to_string_lossy().to_string());
-                }
-            }
+        // Find the output file
+        let output_file = self.output_dir
+            .join(format!("recording-{}.mp4", self.segment_index))
+            .to_string_lossy()
+            .to_string();
+        
+        let mut files = Vec::new();
+        if std::path::Path::new(&output_file).exists() {
+            files.push(output_file.clone());
         }
-        segments.sort();
 
         tracing::info!(
-            "FFmpeg finished: {} frames, {} segments",
+            "FFmpeg finished: {} frames, output: {}",
             self.frame_count(),
-            segments.len(),
+            output_file,
         );
 
-        Ok(segments)
+        Ok(files)
     }
 }
 
