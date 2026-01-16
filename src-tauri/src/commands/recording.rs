@@ -95,6 +95,21 @@ pub async fn start_recording(
         coordinator.add_channel(mic_channel);
     }
     
+    // Add system audio channel if enabled
+    if config.capture_system_audio {
+        #[cfg(target_os = "macos")]
+        {
+            let system_audio_channel = Box::new(crate::capture::macos::system_audio::SystemAudioCaptureChannel::new());
+            coordinator.add_channel(system_audio_channel);
+        }
+        
+        #[cfg(target_os = "windows")]
+        {
+            let system_audio_channel = Box::new(crate::capture::windows::system_audio::SystemAudioCaptureChannel::new());
+            coordinator.add_channel(system_audio_channel);
+        }
+    }
+    
     coordinator.start(config).await.map_err(|e| e.to_string())
 }
 

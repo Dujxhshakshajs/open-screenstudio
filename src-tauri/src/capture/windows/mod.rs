@@ -3,8 +3,10 @@
 //! Uses Windows.Graphics.Capture for screen capture.
 
 pub mod screen;
+pub mod system_audio;
 
 pub use screen::*;
+pub use system_audio::*;
 
 /// Windows doesn't require explicit permission for screen capture
 pub mod permissions {
