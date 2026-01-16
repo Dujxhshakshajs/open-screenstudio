@@ -1,15 +1,13 @@
-//! macOS screen capture using ScreenCaptureKit
+//! macOS screen capture using CGWindowListCreateImage
 //!
-//! This module provides screen capture functionality using Apple's ScreenCaptureKit framework.
+//! This module provides screen capture functionality using Core Graphics.
 //! Frames are captured and encoded to H.264 segments using FFmpeg.
 
 use crate::capture::traits::DisplayInfo;
 use crate::recorder::channel::{ChannelType, RecordingChannel, RecordingError, RecordingResult};
 use async_trait::async_trait;
-use core_graphics::display::CGDisplay;
+use core_graphics::display::{kCGWindowListOptionOnScreenOnly, CGDisplay};
 use parking_lot::Mutex as ParkingMutex;
-use screencapturekit::cv::CVPixelBufferLockFlags;
-use screencapturekit::prelude::*;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -51,6 +49,44 @@ pub fn get_displays() -> Vec<DisplayInfo> {
         .collect()
 }
 
+/// Capture a single frame from a display using CGDisplayCreateImage
+fn capture_display_frame(display_id: u32) -> Option<(Vec<u8>, u32, u32)> {
+    let display = CGDisplay::new(display_id);
+    let bounds = display.bounds();
+
+    // Create image of the entire display
+    let image = CGDisplay::screenshot(
+        bounds,
+        kCGWindowListOptionOnScreenOnly,
+        0, // kCGNullWindowID - capture everything
+        core_graphics::display::kCGWindowImageDefault,
+    )?;
+
+    let width = image.width() as u32;
+    let height = image.height() as u32;
+    let bytes_per_row = image.bytes_per_row();
+    let data = image.data();
+
+    // CGImage data is typically in BGRA format
+    // We need to handle potential row padding
+    let pixel_data: Vec<u8> = if bytes_per_row == (width as usize * 4) {
+        // No padding, direct copy
+        data.bytes().to_vec()
+    } else {
+        // Row padding exists, need to copy row by row
+        let mut result = Vec::with_capacity((width * height * 4) as usize);
+        let src = data.bytes();
+        for y in 0..height as usize {
+            let row_start = y * bytes_per_row;
+            let row_end = row_start + (width as usize * 4);
+            result.extend_from_slice(&src[row_start..row_end]);
+        }
+        result
+    };
+
+    Some((pixel_data, width, height))
+}
+
 /// FFmpeg encoder for HLS segment output
 struct FFmpegSegmentEncoder {
     process: ParkingMutex<Option<Child>>,
@@ -81,23 +117,23 @@ impl FFmpegSegmentEncoder {
         // Output: HLS-compatible fMP4 segments
         let process = Command::new("ffmpeg")
             .args([
-                "-y",           // Overwrite output
-                "-f", "rawvideo", // Input format
-                "-pixel_format", "bgra", // BGRA pixel format from ScreenCaptureKit
+                "-y",                            // Overwrite output
+                "-f", "rawvideo",                // Input format
+                "-pixel_format", "bgra",         // BGRA pixel format from CGImage
                 "-video_size", &format!("{width}x{height}"),
                 "-framerate", &fps.to_string(),
-                "-i", "-",      // Read from stdin
-                "-c:v", "libx264", // H.264 codec
-                "-preset", "ultrafast", // Fast encoding for real-time
-                "-tune", "zerolatency", // Low latency
-                "-pix_fmt", "yuv420p", // Output pixel format
-                "-crf", "23",   // Quality (lower = better, 23 is default)
-                "-g", &(fps * 2).to_string(), // GOP size = 2 seconds
+                "-i", "-",                       // Read from stdin
+                "-c:v", "libx264",               // H.264 codec
+                "-preset", "ultrafast",          // Fast encoding for real-time
+                "-tune", "zerolatency",          // Low latency
+                "-pix_fmt", "yuv420p",           // Output pixel format
+                "-crf", "23",                    // Quality (lower = better, 23 is default)
+                "-g", &(fps * 2).to_string(),    // GOP size = 2 seconds
                 "-keyint_min", &fps.to_string(), // Min keyframe interval
-                "-sc_threshold", "0", // Disable scene change detection
-                "-f", "segment", // Segment muxer
-                "-segment_time", "2", // 2-second segments
-                "-segment_format", "mp4", // MP4 format
+                "-sc_threshold", "0",            // Disable scene change detection
+                "-f", "segment",                 // Segment muxer
+                "-segment_time", "2",            // 2-second segments
+                "-segment_format", "mp4",        // MP4 format
                 "-reset_timestamps", "1",
                 "-movflags", "+faststart+frag_keyframe+empty_moov",
                 &segment_pattern,
@@ -160,7 +196,6 @@ impl FFmpegSegmentEncoder {
         }
 
         // Find all generated segment files
-        let pattern = format!("segment-{}*.mp4", self.segment_index);
         let mut segments = Vec::new();
         if let Ok(entries) = std::fs::read_dir(&self.output_dir) {
             for entry in entries.flatten() {
@@ -175,63 +210,19 @@ impl FFmpegSegmentEncoder {
         segments.sort();
 
         tracing::info!(
-            "FFmpeg finished: {} frames, {} segments (pattern: {})",
+            "FFmpeg finished: {} frames, {} segments",
             self.frame_count(),
             segments.len(),
-            pattern
         );
 
         Ok(segments)
     }
 }
 
-/// Frame handler for ScreenCaptureKit
-struct FrameHandler {
-    encoder: Arc<FFmpegSegmentEncoder>,
-    expected_size: usize,
-    width: u32,
-    height: u32,
-}
-
-impl SCStreamOutputTrait for FrameHandler {
-    fn did_output_sample_buffer(&self, sample: CMSampleBuffer, output_type: SCStreamOutputType) {
-        if !matches!(output_type, SCStreamOutputType::Screen) {
-            return;
-        }
-
-        let Some(pixel_buffer) = sample.image_buffer() else {
-            return;
-        };
-
-        // Lock pixel buffer for CPU access
-        let Ok(guard) = pixel_buffer.lock(CVPixelBufferLockFlags::READ_ONLY) else {
-            return;
-        };
-
-        let data = guard.as_slice();
-
-        // Verify size matches expected (width * height * 4 bytes per pixel for BGRA)
-        if data.len() >= self.expected_size
-            && self.encoder.write_frame(&data[..self.expected_size])
-        {
-            let count = self.encoder.frame_count();
-            if count.is_multiple_of(60) {
-                tracing::debug!(
-                    "Captured {} frames ({:.1}s) at {}x{}",
-                    count,
-                    count as f64 / 30.0,
-                    self.width,
-                    self.height
-                );
-            }
-        }
-    }
-}
-
-/// Display capture channel using ScreenCaptureKit
+/// Display capture channel using CGWindowListCreateImage
 ///
-/// This implementation captures frames using Apple's ScreenCaptureKit framework
-/// and encodes them to H.264 segments using FFmpeg.
+/// This implementation captures frames using Core Graphics and
+/// encodes them to H.264 segments using FFmpeg.
 pub struct DisplayCaptureChannel {
     /// Channel identifier
     id: String,
@@ -254,8 +245,8 @@ pub struct DisplayCaptureChannel {
     /// FFmpeg encoder
     encoder: Option<Arc<FFmpegSegmentEncoder>>,
 
-    /// SCStream handle
-    stream: Option<SCStream>,
+    /// Capture task handle
+    capture_handle: Option<tokio::task::JoinHandle<()>>,
 
     /// Capture width
     width: u32,
@@ -278,30 +269,11 @@ impl DisplayCaptureChannel {
             session_index: 0,
             output_files: Arc::new(ParkingMutex::new(Vec::new())),
             encoder: None,
-            stream: None,
+            capture_handle: None,
             width: 1920,
             height: 1080,
             fps: 30,
         }
-    }
-
-    /// Find the SCDisplay matching our display_id
-    fn find_display(&self) -> RecordingResult<SCDisplay> {
-        let content = SCShareableContent::get().map_err(|e| {
-            RecordingError::CaptureError(format!("Failed to get shareable content: {}", e))
-        })?;
-
-        let displays: Vec<SCDisplay> = content.displays();
-        for display in displays {
-            if display.display_id() == self.display_id {
-                return Ok(display);
-            }
-        }
-
-        Err(RecordingError::ConfigurationError(format!(
-            "Display {} not found",
-            self.display_id
-        )))
     }
 }
 
@@ -333,9 +305,10 @@ impl RecordingChannel for DisplayCaptureChannel {
         }
 
         // Get display info for resolution
-        let display = self.find_display()?;
-        self.width = display.width();
-        self.height = display.height();
+        let display = CGDisplay::new(self.display_id);
+        let bounds = display.bounds();
+        self.width = bounds.size.width as u32;
+        self.height = bounds.size.height as u32;
 
         self.output_dir = Some(output_dir.to_path_buf());
         self.session_index = session_index;
@@ -358,9 +331,6 @@ impl RecordingChannel for DisplayCaptureChannel {
             RecordingError::ConfigurationError("Output directory not set".to_string())
         })?;
 
-        // Find the display
-        let display = self.find_display()?;
-
         // Create FFmpeg encoder
         let encoder = Arc::new(
             FFmpegSegmentEncoder::new(
@@ -374,39 +344,57 @@ impl RecordingChannel for DisplayCaptureChannel {
         );
         self.encoder = Some(encoder.clone());
 
-        // Create content filter for this display
-        let filter = SCContentFilter::create()
-            .with_display(&display)
-            .with_excluding_windows(&[])
-            .build();
-
-        // Configure stream
-        let frame_interval = CMTime::new(1, self.fps as i32);
-        let config = SCStreamConfiguration::new()
-            .with_width(self.width)
-            .with_height(self.height)
-            .with_pixel_format(PixelFormat::BGRA)
-            .with_minimum_frame_interval(&frame_interval)
-            .with_shows_cursor(true);
-
-        // Create frame handler
-        let expected_size = (self.width * self.height * 4) as usize;
-        let handler = FrameHandler {
-            encoder: encoder.clone(),
-            expected_size,
-            width: self.width,
-            height: self.height,
-        };
-
-        // Create and start stream
-        let mut stream = SCStream::new(&filter, &config);
-        stream.add_output_handler(handler, SCStreamOutputType::Screen);
-        stream.start_capture().map_err(|e| {
-            RecordingError::CaptureError(format!("Failed to start capture: {}", e))
-        })?;
-
-        self.stream = Some(stream);
         self.is_recording.store(true, Ordering::SeqCst);
+
+        // Start capture loop in background task
+        let is_recording = self.is_recording.clone();
+        let display_id = self.display_id;
+        let fps = self.fps;
+        let width = self.width;
+        let height = self.height;
+
+        let handle = tokio::spawn(async move {
+            let frame_interval = std::time::Duration::from_millis(1000 / fps as u64);
+            let expected_size = (width * height * 4) as usize; // BGRA = 4 bytes per pixel
+
+            while is_recording.load(Ordering::SeqCst) {
+                let start = std::time::Instant::now();
+
+                // Capture frame
+                if let Some((data, _w, _h)) = capture_display_frame(display_id) {
+                    // Write frame to FFmpeg
+                    if data.len() >= expected_size {
+                        encoder.write_frame(&data[..expected_size]);
+                    } else {
+                        tracing::warn!(
+                            "Frame size mismatch: {} vs expected {}",
+                            data.len(),
+                            expected_size
+                        );
+                    }
+                }
+
+                // Log progress periodically
+                let count = encoder.frame_count();
+                if count.is_multiple_of(60) && count > 0 {
+                    tracing::debug!(
+                        "Captured {} frames ({:.1}s) at {}x{}",
+                        count,
+                        count as f64 / fps as f64,
+                        width,
+                        height
+                    );
+                }
+
+                // Sleep for remaining frame time
+                let elapsed = start.elapsed();
+                if elapsed < frame_interval {
+                    tokio::time::sleep(frame_interval - elapsed).await;
+                }
+            }
+        });
+
+        self.capture_handle = Some(handle);
 
         tracing::info!(
             "Display capture started for display {} ({}x{} @ {}fps)",
@@ -425,13 +413,10 @@ impl RecordingChannel for DisplayCaptureChannel {
 
         self.is_recording.store(false, Ordering::SeqCst);
 
-        // Stop the stream
-        if let Some(ref mut stream) = self.stream {
-            stream.stop_capture().map_err(|e| {
-                RecordingError::CaptureError(format!("Failed to stop capture: {}", e))
-            })?;
+        // Wait for capture task to finish
+        if let Some(handle) = self.capture_handle.take() {
+            let _ = handle.await;
         }
-        self.stream = None;
 
         // Finish encoding and collect output files
         if let Some(ref encoder) = self.encoder {
