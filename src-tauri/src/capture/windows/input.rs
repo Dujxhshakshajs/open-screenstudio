@@ -16,6 +16,7 @@ pub fn start_input_tracking(
     _start_time: Instant,
     _poll_interval: Duration,
     _unix_ms_fn: fn() -> u64,
+    _display_id: u32,
 ) -> RecordingResult<std::thread::JoinHandle<()>> {
     Err(RecordingError::PlatformError(
         "Windows input tracking not implemented yet".to_string(),

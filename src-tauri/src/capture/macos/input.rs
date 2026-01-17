@@ -1,5 +1,6 @@
 use crate::capture::input::types::{CursorInfo, MouseClick, MouseMove};
 use crate::recorder::channel::RecordingResult;
+use core_graphics::display::CGDisplay;
 use objc2::rc::Retained;
 use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep, NSCursor, NSEvent, NSImage};
 use objc2_foundation::{NSDictionary, NSString};
@@ -27,9 +28,27 @@ pub fn start_input_tracking(
     start_time: Instant,
     poll_interval: Duration,
     unix_ms_fn: fn() -> u64,
+    display_id: u32,
 ) -> RecordingResult<std::thread::JoinHandle<()>> {
     // Ensure cursor directory exists
     std::fs::create_dir_all(&cursors_dir)?;
+
+    // Get display info for coordinate transformation
+    // This is needed to:
+    // 1. Convert global screen coordinates to display-relative coordinates (multi-monitor)
+    // 2. Flip Y-axis (macOS uses bottom-left origin, video uses top-left)
+    // 3. Scale from logical points to physical pixels (Retina displays)
+    let display = CGDisplay::new(display_id);
+    let bounds = display.bounds();
+    let scale_factor = display.pixels_high() as f64 / bounds.size.height;
+    let display_origin_x = bounds.origin.x;
+    let display_origin_y = bounds.origin.y;
+    let display_height = bounds.size.height;
+
+    tracing::info!(
+        "Input tracking coordinate transform: display_id={}, origin=({}, {}), logical_height={}, scale_factor={}",
+        display_id, display_origin_x, display_origin_y, display_height, scale_factor
+    );
 
     let handle = std::thread::spawn(move || {
         tracing::info!(
@@ -46,10 +65,20 @@ pub fn start_input_tracking(
             let loop_start = Instant::now();
 
             // Mouse position from NSEvent
-            // NOTE: location is in global screen coordinates
+            // NOTE: location is in global screen coordinates with Y=0 at BOTTOM
             let pos = unsafe { NSEvent::mouseLocation() };
-            let x = pos.x;
-            let y = pos.y;
+            
+            // Transform coordinates:
+            // 1. Make relative to display origin (fixes multi-monitor offset)
+            let rel_x = pos.x - display_origin_x;
+            let rel_y = pos.y - display_origin_y;
+            
+            // 2. Flip Y-axis (macOS bottom-origin to video top-origin)
+            let flipped_y = display_height - rel_y;
+            
+            // 3. Scale to pixel coordinates (for Retina displays)
+            let x = rel_x * scale_factor;
+            let y = flipped_y * scale_factor;
 
             // Cursor capture (only on change, using image hash for deduplication)
             // currentSystemCursor returns Option<Retained<NSCursor>>

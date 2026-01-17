@@ -5,16 +5,12 @@
  * with optional debug visualization showing the raw vs smoothed positions.
  */
 
+import { useMemo } from "react";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import type { SmoothedPosition } from "../../processing/cursorSmoothing";
+import type { CursorInfo } from "../../types/recording";
 
-interface CursorInfo {
-  id: string;
-  imagePath: string;
-  hotspotX: number;
-  hotspotY: number;
-  width: number;
-  height: number;
-}
+export type { CursorInfo };
 
 interface CursorOverlayProps {
   /** Current cursor position (smoothed) */
@@ -69,9 +65,22 @@ export function CursorOverlay({
   containerHeight,
   showDebug = false,
 }: CursorOverlayProps) {
+  // Convert cursor image paths to asset URLs
+  const cursorImageUrls = useMemo(() => {
+    const urls: Record<string, string> = {};
+    for (const [id, info] of Object.entries(cursors)) {
+      if (info.imagePath && info.imagePath.length > 0) {
+        // Convert file path to asset protocol URL
+        urls[id] = convertFileSrc(info.imagePath);
+      }
+    }
+    return urls;
+  }, [cursors]);
+
   if (!position) return null;
 
   const cursorInfo = cursors[position.cursorId];
+  const cursorImageUrl = cursorImageUrls[position.cursorId];
   const { scale, offsetX, offsetY } = calculateScale(
     videoWidth,
     videoHeight,
@@ -89,16 +98,15 @@ export function CursorOverlay({
   const hotspotOffsetX = cursorInfo ? cursorInfo.hotspotX * cursorSize : 0;
   const hotspotOffsetY = cursorInfo ? cursorInfo.hotspotY * cursorSize : 0;
 
-  // Check if we have a valid cursor image
-  const hasValidCursorImage =
-    cursorInfo && cursorInfo.imagePath && cursorInfo.imagePath.length > 0;
+  // Check if we have a valid cursor image URL
+  const hasValidCursorImage = !!cursorImageUrl;
 
   return (
     <div className="absolute inset-0 pointer-events-none overflow-hidden">
       {/* Smoothed cursor */}
       {hasValidCursorImage ? (
         <img
-          src={cursorInfo.imagePath}
+          src={cursorImageUrl}
           alt="cursor"
           className="absolute"
           style={{

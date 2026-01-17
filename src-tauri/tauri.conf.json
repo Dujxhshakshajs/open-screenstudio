@@ -15,22 +15,30 @@
       {
         "label": "toolbar",
         "title": "Open ScreenStudio",
-        "width": 720,
-        "height": 72,
-        "minWidth": 720,
-        "minHeight": 72,
-        "maxHeight": 72,
+        "width": 780,
+        "height": 300,
+        "minWidth": 780,
+        "minHeight": 300,
+        "maxWidth": 780,
+        "maxHeight": 300,
         "resizable": false,
         "fullscreen": false,
         "decorations": false,
         "transparent": true,
-        "center": true,
+        "x": 20,
+        "y": 40,
         "alwaysOnTop": true,
-        "visible": true
+        "visible": true,
+        "skipTaskbar": true,
+        "shadow": false
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**"]
+      }
     },
     "macOSPrivateApi": true
   },

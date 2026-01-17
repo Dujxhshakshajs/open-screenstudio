@@ -156,6 +156,7 @@ impl RecordingChannel for InputTrackingChannel {
             start_time,
             Duration::from_micros(8_333),
             Self::now_unix_ms,
+            self.display_id,
         )?;
 
         *self.thread_handle.lock() = Some(handle);

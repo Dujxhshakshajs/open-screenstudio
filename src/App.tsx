@@ -1,103 +1,63 @@
-import { useState } from "react";
-import { Video, Edit3, Download, FolderOpen, Plus } from "lucide-react";
-import RecordingView from "./components/recording/RecordingView";
+import { useState, useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import RecordingToolbar from "./components/recording/RecordingToolbar";
 import EditorView from "./components/editor/EditorView";
-import ExportView from "./components/export/ExportView";
-import { useProjectStore } from "./stores/projectStore";
 
-type View = "recording" | "editor" | "export";
+type WindowType = "toolbar" | "editor" | "unknown";
 
 function App() {
-  const [currentView, setCurrentView] = useState<View>("recording");
-  const { project, createProject, openProject } = useProjectStore();
+  const [windowType, setWindowType] = useState<WindowType>("unknown");
 
-  const navItems = [
-    { id: "recording" as const, label: "Record", icon: Video },
-    { id: "editor" as const, label: "Edit", icon: Edit3 },
-    { id: "export" as const, label: "Export", icon: Download },
-  ];
+  // Detect which window we're in
+  useEffect(() => {
+    const detectWindow = async () => {
+      try {
+        // First check URL params (for editor window opened via command)
+        const urlParams = new URLSearchParams(window.location.search);
+        const windowParam = urlParams.get("window");
 
-  return (
-    <div className="flex h-screen bg-background dark">
-      {/* Sidebar */}
-      <aside className="w-16 bg-muted/50 border-r border-border flex flex-col items-center py-4 gap-2">
-        {/* Logo */}
-        <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center mb-4">
-          <Video className="w-5 h-5 text-white" />
-        </div>
+        if (windowParam === "editor") {
+          setWindowType("editor");
+          document.body.classList.add("editor-window");
+          return;
+        }
 
-        {/* Navigation */}
-        <nav className="flex flex-col gap-1 flex-1">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = currentView === item.id;
-            return (
-              <button
-                type="button"
-                key={item.id}
-                onClick={() => setCurrentView(item.id)}
-                className={`w-12 h-12 rounded-lg flex flex-col items-center justify-center gap-1 transition-colors ${
-                  isActive
-                    ? "bg-accent text-accent-foreground"
-                    : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-                }`}
-                title={item.label}
-              >
-                <Icon className="w-5 h-5" />
-                <span className="text-[10px]">{item.label}</span>
-              </button>
-            );
-          })}
-        </nav>
+        // Then check via Tauri command
+        const label = await invoke<string>("get_window_label");
+        if (label === "toolbar") {
+          setWindowType("toolbar");
+          document.body.classList.add("toolbar-window");
+        } else if (label === "editor") {
+          setWindowType("editor");
+          document.body.classList.add("editor-window");
+        } else {
+          // Default to toolbar for main window
+          setWindowType("toolbar");
+          document.body.classList.add("toolbar-window");
+        }
+      } catch (err) {
+        console.error("Failed to detect window type:", err);
+        // Default to toolbar if detection fails
+        setWindowType("toolbar");
+        document.body.classList.add("toolbar-window");
+      }
+    };
 
-        {/* Project Actions */}
-        <div className="flex flex-col gap-1">
-          <button
-            type="button"
-            onClick={createProject}
-            className="w-12 h-12 rounded-lg flex flex-col items-center justify-center gap-1 text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
-            title="New Project"
-          >
-            <Plus className="w-5 h-5" />
-            <span className="text-[10px]">New</span>
-          </button>
-          <button
-            type="button"
-            onClick={openProject}
-            className="w-12 h-12 rounded-lg flex flex-col items-center justify-center gap-1 text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
-            title="Open Project"
-          >
-            <FolderOpen className="w-5 h-5" />
-            <span className="text-[10px]">Open</span>
-          </button>
-        </div>
-      </aside>
+    detectWindow();
+  }, []);
 
-      {/* Main Content */}
-      <main className="flex-1 flex flex-col overflow-hidden">
-        {/* Header */}
-        <header className="h-12 border-b border-border flex items-center px-4 gap-4">
-          <h1 className="text-sm font-medium">
-            {project ? project.name : "Open ScreenStudio"}
-          </h1>
-          {project && (
-            <span className="text-xs text-muted-foreground">
-              {currentView === "recording" && "Recording"}
-              {currentView === "editor" && "Editing"}
-              {currentView === "export" && "Export"}
-            </span>
-          )}
-        </header>
+  // Show loading state while detecting window
+  if (windowType === "unknown") {
+    return null;
+  }
 
-        {/* View Content */}
-        <div className="flex-1 overflow-hidden">
-          {currentView === "recording" && <RecordingView />}
-          {currentView === "editor" && <EditorView />}
-          {currentView === "export" && <ExportView />}
-        </div>
-      </main>
-    </div>
-  );
+  // Render the floating toolbar for toolbar window
+  if (windowType === "toolbar") {
+    return <RecordingToolbar />;
+  }
+
+  // Render just the EditorView for editor window (minimal, no sidebar)
+  return <EditorView />;
 }
 
 export default App;

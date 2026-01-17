@@ -55,6 +55,8 @@ pub fn run() {
             commands::recording::resume_recording,
             commands::recording::get_recording_state,
             commands::recording::get_recording_duration,
+            commands::recording::get_video_metadata,
+            commands::recording::load_recording_bundle,
             // Processing commands
             commands::processing::smooth_cursor,
             commands::processing::process_cursor_smoothing,
@@ -67,6 +69,30 @@ pub fn run() {
             commands::window::minimize_toolbar,
             commands::window::restore_toolbar,
         ])
+        .setup(|app| {
+            // Set up transparent background for toolbar window on macOS
+            #[cfg(target_os = "macos")]
+            {
+                #[allow(deprecated)]
+                {
+                    use cocoa::appkit::NSWindow;
+                    use cocoa::base::id;
+                    use tauri::Manager;
+                    
+                    if let Some(window) = app.get_webview_window("toolbar") {
+                        if let Ok(ns_window) = window.ns_window() {
+                            unsafe {
+                                let ns_window = ns_window as id;
+                                // Make sure window background is transparent and no shadow
+                                ns_window.setOpaque_(cocoa::base::NO);
+                                ns_window.setHasShadow_(cocoa::base::NO);
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

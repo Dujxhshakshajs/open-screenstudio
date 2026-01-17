@@ -1,12 +1,22 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" style="background: transparent">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Open ScreenStudio</title>
+    <style>
+      /* Critical: ensure transparent background before CSS loads */
+      html,
+      body,
+      #root {
+        margin: 0;
+        padding: 0;
+        background: transparent !important;
+      }
+    </style>
   </head>
-  <body>
+  <body style="background: transparent">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

@@ -185,3 +185,242 @@ pub async fn get_recording_duration(
     let coordinator = state.coordinator.lock().await;
     Ok(coordinator.duration_ms())
 }
+
+/// Video metadata returned from FFprobe
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoMetadata {
+    pub width: u32,
+    pub height: u32,
+    pub fps: f64,
+    pub duration_ms: f64,
+    pub codec: String,
+}
+
+/// Get video metadata using FFprobe
+#[tauri::command]
+pub async fn get_video_metadata(path: String) -> Result<VideoMetadata, String> {
+    use std::process::Command;
+    
+    // Run ffprobe to get video stream info in JSON format
+    let output = Command::new("ffprobe")
+        .args([
+            "-v", "quiet",
+            "-print_format", "json",
+            "-show_streams",
+            "-show_format",
+            "-select_streams", "v:0",
+            &path,
+        ])
+        .output()
+        .map_err(|e| format!("Failed to run ffprobe: {}", e))?;
+    
+    if !output.status.success() {
+        return Err(format!(
+            "ffprobe failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    
+    let json_str = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&json_str)
+        .map_err(|e| format!("Failed to parse ffprobe output: {}", e))?;
+    
+    // Extract video stream info
+    let streams = json.get("streams")
+        .and_then(|s| s.as_array())
+        .ok_or("No streams found in video")?;
+    
+    let video_stream = streams.first()
+        .ok_or("No video stream found")?;
+    
+    let width = video_stream.get("width")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+    
+    let height = video_stream.get("height")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+    
+    let codec = video_stream.get("codec_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+    
+    // Parse frame rate (can be "30/1" or "29.97" format)
+    let fps = video_stream.get("r_frame_rate")
+        .and_then(|v| v.as_str())
+        .map(|s| {
+            if s.contains('/') {
+                let parts: Vec<&str> = s.split('/').collect();
+                if parts.len() == 2 {
+                    let num: f64 = parts[0].parse().unwrap_or(0.0);
+                    let den: f64 = parts[1].parse().unwrap_or(1.0);
+                    if den > 0.0 { num / den } else { 0.0 }
+                } else {
+                    0.0
+                }
+            } else {
+                s.parse().unwrap_or(0.0)
+            }
+        })
+        .unwrap_or(0.0);
+    
+    // Get duration from format section (more reliable)
+    let duration_secs = json.get("format")
+        .and_then(|f| f.get("duration"))
+        .and_then(|d| d.as_str())
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(0.0);
+    
+    let duration_ms = duration_secs * 1000.0;
+    
+    Ok(VideoMetadata {
+        width,
+        height,
+        fps,
+        duration_ms,
+        codec,
+    })
+}
+
+/// Mouse move event from recording
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MouseMoveEvent {
+    pub x: f64,
+    pub y: f64,
+    pub cursor_id: String,
+    pub active_modifiers: Vec<String>,
+    pub process_time_ms: f64,
+    pub unix_time_ms: u64,
+}
+
+/// Mouse click event from recording
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MouseClickEvent {
+    pub x: f64,
+    pub y: f64,
+    pub button: String,
+    pub event_type: String,
+    pub click_count: u32,
+    pub active_modifiers: Vec<String>,
+    pub process_time_ms: f64,
+    pub unix_time_ms: u64,
+}
+
+/// Cursor image info from recording
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CursorInfo {
+    pub id: String,
+    pub image_path: String,
+    pub hotspot_x: f64,
+    pub hotspot_y: f64,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Complete recording bundle data
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordingBundle {
+    pub bundle_path: String,
+    pub video_path: String,
+    pub mic_audio_path: Option<String>,
+    pub system_audio_path: Option<String>,
+    pub mouse_moves: Vec<MouseMoveEvent>,
+    pub mouse_clicks: Vec<MouseClickEvent>,
+    pub cursors: std::collections::HashMap<String, CursorInfo>,
+    pub video_metadata: VideoMetadata,
+}
+
+/// Load a recording bundle from disk
+#[tauri::command]
+pub async fn load_recording_bundle(bundle_path: String) -> Result<RecordingBundle, String> {
+    use std::collections::HashMap;
+    use std::fs;
+    use std::path::Path;
+    
+    let bundle_dir = Path::new(&bundle_path);
+    
+    // Find the recording directory (could be "recording" or directly in bundle)
+    let recording_dir = if bundle_dir.join("recording").exists() {
+        bundle_dir.join("recording")
+    } else {
+        bundle_dir.to_path_buf()
+    };
+    
+    // Find video file
+    let video_path = recording_dir.join("recording-0.mp4");
+    if !video_path.exists() {
+        return Err(format!("Video file not found: {:?}", video_path));
+    }
+    
+    // Get video metadata
+    let video_metadata = get_video_metadata(video_path.to_string_lossy().to_string()).await?;
+    
+    // Load mouse moves
+    let mouse_moves_path = recording_dir.join("recording-0-mouse-moves.json");
+    let mouse_moves: Vec<MouseMoveEvent> = if mouse_moves_path.exists() {
+        let content = fs::read_to_string(&mouse_moves_path)
+            .map_err(|e| format!("Failed to read mouse moves: {}", e))?;
+        serde_json::from_str(&content)
+            .map_err(|e| format!("Failed to parse mouse moves: {}", e))?
+    } else {
+        Vec::new()
+    };
+    
+    // Load mouse clicks
+    let mouse_clicks_path = recording_dir.join("recording-0-mouse-clicks.json");
+    let mouse_clicks: Vec<MouseClickEvent> = if mouse_clicks_path.exists() {
+        let content = fs::read_to_string(&mouse_clicks_path)
+            .map_err(|e| format!("Failed to read mouse clicks: {}", e))?;
+        serde_json::from_str(&content)
+            .map_err(|e| format!("Failed to parse mouse clicks: {}", e))?
+    } else {
+        Vec::new()
+    };
+    
+    // Load cursor info
+    let cursors_path = recording_dir.join("recording-0-cursors.json");
+    let cursors: HashMap<String, CursorInfo> = if cursors_path.exists() {
+        let content = fs::read_to_string(&cursors_path)
+            .map_err(|e| format!("Failed to read cursors: {}", e))?;
+        serde_json::from_str(&content)
+            .map_err(|e| format!("Failed to parse cursors: {}", e))?
+    } else {
+        HashMap::new()
+    };
+    
+    // Find audio files
+    let mic_audio_path = recording_dir.join("recording-0-mic.m4a");
+    let system_audio_path = recording_dir.join("recording-0-system.m4a");
+    
+    tracing::info!(
+        "Loaded recording bundle: {} mouse moves, {} clicks, {} cursors",
+        mouse_moves.len(),
+        mouse_clicks.len(),
+        cursors.len()
+    );
+    
+    Ok(RecordingBundle {
+        bundle_path: bundle_path.clone(),
+        video_path: video_path.to_string_lossy().to_string(),
+        mic_audio_path: if mic_audio_path.exists() {
+            Some(mic_audio_path.to_string_lossy().to_string())
+        } else {
+            None
+        },
+        system_audio_path: if system_audio_path.exists() {
+            Some(system_audio_path.to_string_lossy().to_string())
+        } else {
+            None
+        },
+        mouse_moves,
+        mouse_clicks,
+        cursors,
+        video_metadata,
+    })
+}
