@@ -65,20 +65,33 @@ pub fn start_input_tracking(
             let loop_start = Instant::now();
 
             // Mouse position from NSEvent
-            // NOTE: location is in global screen coordinates with Y=0 at BOTTOM
+            // NOTE: NSEvent::mouseLocation() returns coordinates in AppKit coordinate system:
+            // - Origin at bottom-left of main screen
+            // - Y increases upward (Y=0 at bottom, Y=screen_height at top)
+            // 
+            // CGDisplay::bounds() returns coordinates in Quartz coordinate system:
+            // - Origin at top-left of main screen  
+            // - Y increases downward
+            //
+            // Video frames use standard image coordinates (top-left origin, Y down)
+            // So we need to convert AppKit Y to video Y.
             let pos = unsafe { NSEvent::mouseLocation() };
             
             // Transform coordinates:
-            // 1. Make relative to display origin (fixes multi-monitor offset)
+            // 1. X: Make relative to display origin (both coordinate systems use left-to-right)
             let rel_x = pos.x - display_origin_x;
-            let rel_y = pos.y - display_origin_y;
             
-            // 2. Flip Y-axis (macOS bottom-origin to video top-origin)
-            let flipped_y = display_height - rel_y;
+            // 2. Y: Convert from AppKit (bottom-up) to video (top-down)
+            // For main display: video_y = display_height - NSEvent.y
+            // Note: We DON'T subtract display_origin_y because it's in Quartz coords,
+            // but pos.y is in AppKit coords - they use opposite Y directions!
+            // For multi-monitor, this assumes recording the main display.
+            // TODO: For secondary displays, need to compute AppKit-space origin.
+            let video_y = display_height - pos.y;
             
             // 3. Scale to pixel coordinates (for Retina displays)
             let x = rel_x * scale_factor;
-            let y = flipped_y * scale_factor;
+            let y = video_y * scale_factor;
 
             // Cursor capture (only on change, using image hash for deduplication)
             // currentSystemCursor returns Option<Retained<NSCursor>>
