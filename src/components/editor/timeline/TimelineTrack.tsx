@@ -13,17 +13,17 @@ export default function TimelineTrack({
   height = 48,
 }: TimelineTrackProps) {
   return (
-    <div className="flex border-b border-[--border]">
+    <div className="flex border-b border-border">
       {/* Track label */}
       <div
-        className="flex-shrink-0 bg-[--muted] border-r border-[--border] px-2 flex items-center"
+        className="flex-shrink-0 bg-muted border-r border-border px-2 flex items-center"
         style={{ width: TIMELINE_LABEL_WIDTH, height }}
       >
-        <span className="text-xs text-[--foreground]/60 truncate">{label}</span>
+        <span className="text-xs text-foreground/60 truncate">{label}</span>
       </div>
 
       {/* Track content area */}
-      <div className="relative flex-1 bg-[--background]" style={{ height }}>
+      <div className="relative flex-1 bg-background" style={{ height }}>
         {children}
       </div>
     </div>

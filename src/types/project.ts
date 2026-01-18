@@ -173,7 +173,10 @@ export interface Scene {
   name: string;
   type: SceneType;
   sessionIndex: number;
-  slices: Slice[];
+  /** @deprecated Use screenSlices instead */
+  slices?: Slice[];
+  screenSlices: Slice[];
+  cameraSlices: Slice[];
   zoomRanges: ZoomRange[];
   layouts: Layout[];
 }

@@ -362,7 +362,11 @@ pub struct Scene {
     #[serde(rename = "type")]
     pub scene_type: SceneType,
     pub session_index: usize,
+    /// @deprecated Use screen_slices instead
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub slices: Vec<Slice>,
+    pub screen_slices: Vec<Slice>,
+    pub camera_slices: Vec<Slice>,
     pub zoom_ranges: Vec<ZoomRange>,
     pub layouts: Vec<Layout>,
 }

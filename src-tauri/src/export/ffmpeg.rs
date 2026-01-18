@@ -3,7 +3,7 @@
 //! This module provides FFmpeg-based video decoding and encoding
 //! for the export pipeline.
 
-use crate::export::types::{ExportError, ExportFormat, ExportOptions};
+use crate::export::types::{ExportError, ExportFormat, ExportOptions, ExportSegment, TrackEdits};
 use std::io::{BufReader, Read, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -490,5 +490,422 @@ impl VideoEncoder {
 
         tracing::info!("FFmpeg encoder finished: {} frames written", self.frame_count);
         Ok(())
+    }
+}
+
+/// Build atempo filter chain for arbitrary speed changes
+/// atempo only accepts 0.5-2.0, so chain multiple for larger changes
+fn build_atempo_chain(time_scale: f64) -> String {
+    if (time_scale - 1.0).abs() < 0.01 {
+        return "anull".to_string();
+    }
+
+    let mut remaining = time_scale;
+    let mut filters = Vec::new();
+
+    while remaining > 2.0 {
+        filters.push("atempo=2.0".to_string());
+        remaining /= 2.0;
+    }
+    while remaining < 0.5 {
+        filters.push("atempo=0.5".to_string());
+        remaining *= 2.0;
+    }
+
+    if (remaining - 1.0).abs() > 0.01 {
+        filters.push(format!("atempo={:.4}", remaining));
+    }
+
+    if filters.is_empty() {
+        "anull".to_string()
+    } else {
+        filters.join(",")
+    }
+}
+
+/// Build filter_complex for video segments with trim/concat
+fn build_video_filter(segments: &[ExportSegment], input_index: usize) -> (String, String) {
+    let mut filters = Vec::new();
+    let mut concat_inputs = Vec::new();
+
+    for (i, seg) in segments.iter().enumerate() {
+        let start = seg.source_start_secs();
+        let end = seg.source_end_secs();
+        let label = format!("v{}", i);
+
+        // Trim and reset timestamps
+        let filter = if (seg.time_scale - 1.0).abs() < 0.01 {
+            // No speed change
+            format!(
+                "[{}:v]trim=start={}:end={},setpts=PTS-STARTPTS[{}]",
+                input_index, start, end, label
+            )
+        } else {
+            // Apply speed change via setpts
+            format!(
+                "[{}:v]trim=start={}:end={},setpts=(PTS-STARTPTS)/{}[{}]",
+                input_index, start, end, seg.time_scale, label
+            )
+        };
+        filters.push(filter);
+        concat_inputs.push(format!("[{}]", label));
+    }
+
+    let output_label = if segments.len() > 1 {
+        // Concat all segments
+        filters.push(format!(
+            "{}concat=n={}:v=1:a=0[vconcat]",
+            concat_inputs.join(""),
+            segments.len()
+        ));
+        "vconcat".to_string()
+    } else {
+        "v0".to_string()
+    };
+
+    (filters.join(";"), output_label)
+}
+
+/// Build filter_complex for audio segments with trim/concat
+fn build_audio_filter(
+    segments: &[ExportSegment],
+    input_index: usize,
+    prefix: &str,
+) -> (String, String) {
+    let mut filters = Vec::new();
+    let mut concat_inputs = Vec::new();
+
+    for (i, seg) in segments.iter().enumerate() {
+        let start = seg.source_start_secs();
+        let end = seg.source_end_secs();
+        let label = format!("{}{}", prefix, i);
+
+        // Trim, reset timestamps, and apply tempo change
+        let atempo = build_atempo_chain(seg.time_scale);
+        let filter = format!(
+            "[{}:a]atrim=start={}:end={},asetpts=PTS-STARTPTS,{}[{}]",
+            input_index, start, end, atempo, label
+        );
+        filters.push(filter);
+        concat_inputs.push(format!("[{}]", label));
+    }
+
+    let output_label = if segments.len() > 1 {
+        // Concat all segments
+        let out_label = format!("{}concat", prefix);
+        filters.push(format!(
+            "{}concat=n={}:v=0:a=1[{}]",
+            concat_inputs.join(""),
+            segments.len(),
+            out_label
+        ));
+        out_label
+    } else {
+        format!("{}0", prefix)
+    };
+
+    (filters.join(";"), output_label)
+}
+
+/// Export video with edits using FFmpeg filter_complex
+///
+/// This function handles trim, cut, and speed changes by building a filter_complex
+/// that processes segments directly in FFmpeg, avoiding the need to process
+/// frames in Rust.
+pub fn export_with_edits(
+    video_path: &Path,
+    webcam_path: Option<&Path>,
+    mic_audio_path: Option<&Path>,
+    system_audio_path: Option<&Path>,
+    options: &ExportOptions,
+    edits: &TrackEdits,
+) -> Result<std::process::Child, ExportError> {
+    // Get source video metadata for scaling decisions
+    let (source_width, source_height, _, source_fps) = VideoDecoder::probe_video(video_path)?;
+
+    let output_width = options.width.unwrap_or(source_width);
+    let output_height = options.height.unwrap_or(source_height);
+    let output_fps = options.fps.unwrap_or(source_fps as u32);
+
+    let crf = options.quality.crf();
+    let preset = options.quality.h264_preset();
+
+    // Build input args
+    let mut args = vec!["-y".to_string()];
+
+    // Input 0: video
+    args.extend(["-i".to_string(), video_path.to_string_lossy().to_string()]);
+
+    // Track input indices
+    let mut webcam_input_index: Option<usize> = None;
+    let mut mic_input_index: Option<usize> = None;
+    let mut system_input_index: Option<usize> = None;
+    let mut next_input = 1;
+
+    // Input 1: webcam (if included)
+    if let Some(wc_path) = webcam_path {
+        if options.include_webcam && wc_path.exists() {
+            args.extend(["-i".to_string(), wc_path.to_string_lossy().to_string()]);
+            webcam_input_index = Some(next_input);
+            next_input += 1;
+        }
+    }
+
+    // Input 2+: audio files
+    if let Some(mic_path) = mic_audio_path {
+        if options.include_mic_audio && mic_path.exists() {
+            args.extend(["-i".to_string(), mic_path.to_string_lossy().to_string()]);
+            mic_input_index = Some(next_input);
+            next_input += 1;
+        }
+    }
+
+    if let Some(system_path) = system_audio_path {
+        if options.include_system_audio && system_path.exists() {
+            args.extend(["-i".to_string(), system_path.to_string_lossy().to_string()]);
+            system_input_index = Some(next_input);
+        }
+    }
+
+    // Build filter_complex
+    let mut filter_parts = Vec::new();
+    let mut audio_outputs = Vec::new();
+
+    // Video filter
+    let (video_filter, video_label) = build_video_filter(&edits.segments, 0);
+    filter_parts.push(video_filter);
+
+    // Add scaling and fps conversion
+    // If webcam is included, output to intermediate label; otherwise output to [vout]
+    let video_scaled_label = if webcam_input_index.is_some() {
+        "vscaled"
+    } else {
+        "vout"
+    };
+
+    let scale_filter = if source_width != output_width || source_height != output_height {
+        format!(
+            "[{}]scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2:black,fps={}[{}]",
+            video_label, output_width, output_height, output_width, output_height, output_fps, video_scaled_label
+        )
+    } else {
+        format!("[{}]fps={}[{}]", video_label, output_fps, video_scaled_label)
+    };
+    filter_parts.push(scale_filter);
+
+    // Add webcam overlay if included
+    if let Some(wc_idx) = webcam_input_index {
+        // Scale webcam to 12.5% of output width, position in bottom-right with 20px margin
+        let webcam_width = (output_width as f64 * 0.125) as u32;
+        let margin = 20;
+
+        // Apply same trim/concat edits to webcam as main video
+        let mut wc_segment_labels = Vec::new();
+        for (i, seg) in edits.segments.iter().enumerate() {
+            let start_sec = seg.source_start_ms as f64 / 1000.0;
+            let end_sec = seg.source_end_ms as f64 / 1000.0;
+            let label = format!("wc{}", i);
+
+            filter_parts.push(format!(
+                "[{}:v]trim=start={}:end={},setpts=PTS-STARTPTS[{}]",
+                wc_idx, start_sec, end_sec, label
+            ));
+            wc_segment_labels.push(format!("[{}]", label));
+        }
+
+        // Concat webcam segments if multiple
+        let wc_concat_label = if wc_segment_labels.len() > 1 {
+            filter_parts.push(format!(
+                "{}concat=n={}:v=1:a=0[wcconcat]",
+                wc_segment_labels.join(""),
+                wc_segment_labels.len()
+            ));
+            "wcconcat".to_string()
+        } else {
+            // Single segment, use directly (strip brackets)
+            wc_segment_labels[0][1..wc_segment_labels[0].len() - 1].to_string()
+        };
+
+        // Scale webcam video
+        filter_parts.push(format!(
+            "[{}]scale={}:-1[wc_scaled]",
+            wc_concat_label, webcam_width
+        ));
+
+        // Overlay webcam on main video with 'shortest' to match main video duration
+        filter_parts.push(format!(
+            "[vscaled][wc_scaled]overlay=W-w-{}:H-h-{}:shortest=1[vout]",
+            margin, margin
+        ));
+    }
+
+    // Mic audio filter
+    if let Some(mic_idx) = mic_input_index {
+        let (audio_filter, audio_label) = build_audio_filter(&edits.segments, mic_idx, "mic");
+        filter_parts.push(audio_filter);
+        audio_outputs.push(format!("[{}]", audio_label));
+    }
+
+    // System audio filter
+    if let Some(sys_idx) = system_input_index {
+        let (audio_filter, audio_label) = build_audio_filter(&edits.segments, sys_idx, "sys");
+        filter_parts.push(audio_filter);
+        audio_outputs.push(format!("[{}]", audio_label));
+    }
+
+    // Mix audio if multiple sources
+    let final_audio_label = if audio_outputs.len() > 1 {
+        filter_parts.push(format!(
+            "{}amix=inputs={}:duration=longest[aout]",
+            audio_outputs.join(""),
+            audio_outputs.len()
+        ));
+        Some("[aout]".to_string())
+    } else if audio_outputs.len() == 1 {
+        Some(audio_outputs[0].clone())
+    } else {
+        None
+    };
+
+    // Join all filter parts
+    let filter_complex = filter_parts.join(";");
+    args.extend(["-filter_complex".to_string(), filter_complex]);
+
+    // Map outputs
+    args.extend(["-map".to_string(), "[vout]".to_string()]);
+    if let Some(audio_label) = final_audio_label {
+        args.extend(["-map".to_string(), audio_label]);
+    }
+
+    // Video codec options
+    match options.format {
+        ExportFormat::Mp4 => {
+            args.extend([
+                "-c:v".to_string(),
+                "libx264".to_string(),
+                "-preset".to_string(),
+                preset.to_string(),
+                "-crf".to_string(),
+                crf.to_string(),
+                "-pix_fmt".to_string(),
+                "yuv420p".to_string(),
+                "-movflags".to_string(),
+                "+faststart".to_string(),
+            ]);
+        }
+        ExportFormat::Webm => {
+            args.extend([
+                "-c:v".to_string(),
+                "libvpx-vp9".to_string(),
+                "-crf".to_string(),
+                crf.to_string(),
+                "-b:v".to_string(),
+                "0".to_string(),
+            ]);
+        }
+        ExportFormat::Gif => {
+            // GIF handling - simplified
+            args.extend(["-f".to_string(), "gif".to_string()]);
+        }
+    }
+
+    // Audio codec
+    if mic_input_index.is_some() || system_input_index.is_some() {
+        args.extend([
+            "-c:a".to_string(),
+            "aac".to_string(),
+            "-b:a".to_string(),
+            "192k".to_string(),
+        ]);
+    }
+
+    // Progress output for tracking
+    args.extend(["-progress".to_string(), "pipe:1".to_string()]);
+
+    // Output path
+    args.push(options.output_path.clone());
+
+    tracing::info!("Starting FFmpeg export with edits: {:?}", args);
+
+    let process = Command::new("ffmpeg")
+        .args(&args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| ExportError::Ffmpeg(format!("Failed to start FFmpeg: {}", e)))?;
+
+    Ok(process)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_atempo_chain_normal() {
+        let chain = build_atempo_chain(1.0);
+        assert_eq!(chain, "anull");
+    }
+
+    #[test]
+    fn test_atempo_chain_2x() {
+        let chain = build_atempo_chain(2.0);
+        assert!(chain.contains("atempo=2"));
+    }
+
+    #[test]
+    fn test_atempo_chain_4x() {
+        // 4x speed needs: atempo=2.0,atempo=2.0
+        let chain = build_atempo_chain(4.0);
+        assert_eq!(chain.matches("atempo=2.0").count(), 2);
+    }
+
+    #[test]
+    fn test_atempo_chain_half() {
+        let chain = build_atempo_chain(0.5);
+        assert!(chain.contains("atempo=0.5"));
+    }
+
+    #[test]
+    fn test_video_filter_single_segment() {
+        let segments = vec![ExportSegment {
+            source_start_ms: 1000,
+            source_end_ms: 5000,
+            time_scale: 1.0,
+        }];
+        let (filter, label) = build_video_filter(&segments, 0);
+        assert!(filter.contains("trim=start=1:end=5"));
+        assert_eq!(label, "v0");
+    }
+
+    #[test]
+    fn test_video_filter_multiple_segments() {
+        let segments = vec![
+            ExportSegment {
+                source_start_ms: 0,
+                source_end_ms: 2000,
+                time_scale: 1.0,
+            },
+            ExportSegment {
+                source_start_ms: 5000,
+                source_end_ms: 8000,
+                time_scale: 1.0,
+            },
+        ];
+        let (filter, label) = build_video_filter(&segments, 0);
+        assert!(filter.contains("concat=n=2"));
+        assert_eq!(label, "vconcat");
+    }
+
+    #[test]
+    fn test_video_filter_with_speed() {
+        let segments = vec![ExportSegment {
+            source_start_ms: 0,
+            source_end_ms: 4000,
+            time_scale: 2.0,
+        }];
+        let (filter, _) = build_video_filter(&segments, 0);
+        assert!(filter.contains("setpts=(PTS-STARTPTS)/2"));
     }
 }

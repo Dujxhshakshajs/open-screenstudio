@@ -3,43 +3,50 @@
 @tailwind utilities;
 
 @layer base {
-  :root {
-    --background: 0 0% 100%;
-    --foreground: 240 10% 3.9%;
-    --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
-    --accent: 240 4.8% 95.9%;
-    --accent-foreground: 240 5.9% 10%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 5.9% 90%;
-    --ring: 240 5.9% 10%;
-    --radius: 0.5rem;
-
-    /* Timeline-specific tokens */
-    --timeline-playhead: 0 84.2% 60.2%;
-    --timeline-selection: 217 91% 60%;
-    --timeline-slice: 240 4.8% 85%;
-    --timeline-slice-selected: 217 91% 60%;
-  }
-
+  :root,
   .dark {
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 98%;
-    --muted: 240 3.7% 15.9%;
-    --muted-foreground: 240 5% 64.9%;
-    --accent: 240 3.7% 15.9%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 3.7% 15.9%;
-    --ring: 240 4.9% 83.9%;
+    /* Core backgrounds */
+    --background: 240 8% 11%; /* #1a1a1e - Deep Background */
+    --foreground: 0 0% 100%; /* #ffffff - Text Primary */
+
+    /* Panel/Card hierarchy */
+    --panel: 240 4% 15%; /* #252528 - Panel Background */
+    --card: 240 5% 19%; /* #2d2d32 - Card Surface */
+
+    /* Muted/Secondary text */
+    --muted: 240 4% 15%; /* Same as panel for backgrounds */
+    --muted-foreground: 218 11% 65%; /* #9ca3af - Text Secondary */
+
+    /* Border */
+    --border: 240 5% 24%; /* #3a3a40 - Border Subtle */
+
+    /* Accent (purple - primary interactive) */
+    --accent: 258 90% 66%; /* #8b5cf6 - Accent Purple */
+    --accent-foreground: 0 0% 100%;
+
+    /* Accent variations */
+    --accent-orange: 25 95% 53%; /* #f97316 - Waveforms, audio */
+    --accent-yellow: 43 96% 56%; /* #fbbf24 - Markers, keyframes */
+
+    /* Success */
+    --success: 142 71% 45%; /* #22c55e - Success states */
+    --success-foreground: 0 0% 100%;
+
+    /* Destructive */
+    --destructive: 0 84% 60%; /* #ef4444 - Destructive actions */
+    --destructive-foreground: 0 0% 100%;
+
+    /* Ring/Focus */
+    --ring: 258 90% 66%; /* Match accent purple for focus rings */
 
     /* Timeline-specific tokens */
-    --timeline-playhead: 0 84.2% 60.2%;
-    --timeline-selection: 217 91% 60%;
-    --timeline-slice: 240 3.7% 25%;
-    --timeline-slice-selected: 217 91% 60%;
+    --timeline-playhead: 0 84% 60%; /* Destructive red */
+    --timeline-selection: 258 90% 66%; /* Accent purple */
+    --timeline-slice: 240 5% 24%; /* Border subtle */
+    --timeline-slice-selected: 258 90% 66%; /* Accent purple */
+    --timeline-waveform: 25 95% 53%; /* Accent orange for waveforms */
+
+    --radius: 0.5rem;
   }
 }
 

@@ -70,6 +70,71 @@ impl ExportQuality {
     }
 }
 
+/// A single segment to include in export (represents trim/cut edits)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportSegment {
+    /// Start time in source media (milliseconds)
+    pub source_start_ms: u64,
+    /// End time in source media (milliseconds)
+    pub source_end_ms: u64,
+    /// Time scale factor (1.0 = normal, 2.0 = 2x speed, 0.5 = half speed)
+    #[serde(default = "default_time_scale")]
+    pub time_scale: f64,
+}
+
+fn default_time_scale() -> f64 {
+    1.0
+}
+
+impl ExportSegment {
+    /// Duration in the source media (milliseconds)
+    pub fn source_duration_ms(&self) -> u64 {
+        self.source_end_ms.saturating_sub(self.source_start_ms)
+    }
+
+    /// Duration in the output after time scaling (milliseconds)
+    pub fn output_duration_ms(&self) -> u64 {
+        (self.source_duration_ms() as f64 / self.time_scale) as u64
+    }
+
+    /// Start time in seconds for FFmpeg
+    pub fn source_start_secs(&self) -> f64 {
+        self.source_start_ms as f64 / 1000.0
+    }
+
+    /// End time in seconds for FFmpeg
+    pub fn source_end_secs(&self) -> f64 {
+        self.source_end_ms as f64 / 1000.0
+    }
+}
+
+/// Edit instructions for a track (screen or camera)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrackEdits {
+    /// Ordered list of segments to include
+    pub segments: Vec<ExportSegment>,
+}
+
+impl TrackEdits {
+    /// Check if this represents the full source with no cuts
+    pub fn is_full_source(&self, source_duration_ms: u64) -> bool {
+        if self.segments.len() != 1 {
+            return false;
+        }
+        let seg = &self.segments[0];
+        seg.source_start_ms == 0
+            && seg.source_end_ms >= source_duration_ms.saturating_sub(100) // Allow small tolerance
+            && (seg.time_scale - 1.0).abs() < 0.01
+    }
+
+    /// Total output duration after all edits (milliseconds)
+    pub fn total_output_duration_ms(&self) -> u64 {
+        self.segments.iter().map(|s| s.output_duration_ms()).sum()
+    }
+}
+
 /// Export configuration options
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -94,6 +159,10 @@ pub struct ExportOptions {
     pub include_mic_audio: bool,
     /// Whether to include system audio
     pub include_system_audio: bool,
+    /// Screen track edits (optional - if None, use full source)
+    pub screen_edits: Option<TrackEdits>,
+    /// Camera track edits (optional - if None, use full source)
+    pub camera_edits: Option<TrackEdits>,
 }
 
 /// Export progress stages

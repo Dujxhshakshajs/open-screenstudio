@@ -1,10 +1,13 @@
-import { useCallback, memo } from "react";
+import { useCallback, useEffect, memo } from "react";
 import type { Slice } from "../../../types/project";
 import { useEditorStore } from "../../../stores/editorStore";
+import { useWaveformStore } from "../../../stores/waveformStore";
+import Waveform from "./Waveform";
 import {
   SLICE_MIN_WIDTH,
   SLICE_TRIM_HANDLE_WIDTH,
   SLICE_MIN_DURATION_MS,
+  TIMELINE_TRACK_HEIGHT,
 } from "./constants";
 
 interface SliceItemProps {
@@ -16,6 +19,10 @@ interface SliceItemProps {
   onTrimStart: (newSourceStartMs: number) => void;
   onTrimEnd: (newSourceEndMs: number) => void;
   onSelect: () => void;
+  /** Path to audio file for waveform display */
+  audioPath?: string;
+  /** Color for the waveform */
+  waveformColor?: string;
 }
 
 /**
@@ -40,13 +47,29 @@ function SliceItem({
   onTrimStart,
   onTrimEnd,
   onSelect,
+  audioPath,
+  waveformColor = "rgba(255, 255, 255, 0.3)",
 }: SliceItemProps) {
   const { selectedSliceId, activeTool } = useEditorStore();
+  const { fetchWaveform, cache } = useWaveformStore();
   const isSelected = selectedSliceId === slice.id;
+
+  // Fetch waveform data when audio path is available
+  useEffect(() => {
+    if (audioPath) {
+      fetchWaveform(audioPath);
+    }
+  }, [audioPath, fetchWaveform]);
+
+  // Get cached waveform data
+  const waveformData = audioPath ? cache[audioPath] : null;
 
   // Calculate dimensions
   const width = outputDurationMs * pxPerMs;
   const left = outputStartMs * pxPerMs;
+
+  // Calculate waveform display height (track height minus padding)
+  const waveformHeight = TIMELINE_TRACK_HEIGHT - 8; // 4px padding top + 4px bottom
 
   // Show handles only if slice is wide enough
   const showHandles = width > SLICE_TRIM_HANDLE_WIDTH * 3;
@@ -138,7 +161,7 @@ function SliceItem({
           aria-label="Trim start"
           aria-valuenow={slice.sourceStartMs}
           tabIndex={0}
-          className="absolute left-0 top-0 bottom-0 bg-[--foreground]/10 hover:bg-[--foreground]/30 cursor-ew-resize z-10 transition-colors"
+          className="absolute left-0 top-0 bottom-0 bg-foreground/10 hover:bg-foreground/30 cursor-ew-resize z-10 transition-colors"
           style={{ width: SLICE_TRIM_HANDLE_WIDTH }}
           onMouseDown={handleTrimStart}
           onKeyDown={(e) => {
@@ -152,12 +175,24 @@ function SliceItem({
         />
       )}
 
+      {/* Waveform background */}
+      {waveformData && (
+        <Waveform
+          data={waveformData}
+          sourceStartMs={slice.sourceStartMs}
+          sourceEndMs={slice.sourceEndMs}
+          width={Math.max(width, SLICE_MIN_WIDTH)}
+          height={waveformHeight}
+          color={waveformColor}
+        />
+      )}
+
       {/* Slice content */}
-      <div className="px-2 py-1 h-full flex flex-col justify-center overflow-hidden pointer-events-none">
-        <span className="text-xs font-medium text-[--foreground] truncate">
+      <div className="px-2 py-1 h-full flex flex-col justify-center overflow-hidden pointer-events-none relative z-[1]">
+        <span className="text-xs font-medium text-foreground truncate drop-shadow-sm">
           Clip {index + 1}
         </span>
-        <span className="text-[11px] text-[--foreground]/60 truncate">
+        <span className="text-[11px] text-foreground/60 truncate drop-shadow-sm">
           {formatDuration(outputDurationMs)}
         </span>
       </div>
@@ -169,7 +204,7 @@ function SliceItem({
           aria-label="Trim end"
           aria-valuenow={slice.sourceEndMs}
           tabIndex={0}
-          className="absolute right-0 top-0 bottom-0 bg-[--foreground]/10 hover:bg-[--foreground]/30 cursor-ew-resize z-10 transition-colors"
+          className="absolute right-0 top-0 bottom-0 bg-foreground/10 hover:bg-foreground/30 cursor-ew-resize z-10 transition-colors"
           style={{ width: SLICE_TRIM_HANDLE_WIDTH }}
           onMouseDown={handleTrimEnd}
           onKeyDown={(e) => {
@@ -184,7 +219,7 @@ function SliceItem({
 
       {/* Speed indicator if not 1x */}
       {slice.timeScale !== 1 && (
-        <div className="absolute bottom-1 right-2 text-[10px] bg-[--background]/80 px-1 rounded text-[--foreground]/80">
+        <div className="absolute bottom-1 right-2 text-[10px] bg-background/80 px-1 rounded text-foreground/80">
           {slice.timeScale}x
         </div>
       )}

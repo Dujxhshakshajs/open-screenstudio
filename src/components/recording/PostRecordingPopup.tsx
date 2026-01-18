@@ -161,9 +161,8 @@ export default function PostRecordingPopup({
           <button
             type="button"
             onClick={onSave}
-            className="popup-btn popup-btn-disabled"
-            disabled
-            title="Coming soon"
+            className="popup-btn popup-btn-secondary"
+            title="Save project to disk"
           >
             <Save className="w-4 h-4" />
             <span>Save...</span>

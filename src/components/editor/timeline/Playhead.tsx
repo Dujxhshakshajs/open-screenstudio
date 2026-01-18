@@ -7,6 +7,7 @@ interface PlayheadProps {
   height: number;
   onSeek: (timeMs: number) => void;
   totalDurationMs: number;
+  labelOffset?: number;
 }
 
 export default function Playhead({
@@ -15,11 +16,12 @@ export default function Playhead({
   height,
   onSeek,
   totalDurationMs,
+  labelOffset = 0,
 }: PlayheadProps) {
   const isDraggingRef = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const x = timeMs * pxPerMs;
+  const x = timeMs * pxPerMs + labelOffset;
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -34,7 +36,7 @@ export default function Playhead({
         if (!container) return;
 
         const rect = container.getBoundingClientRect();
-        const relativeX = moveEvent.clientX - rect.left;
+        const relativeX = moveEvent.clientX - rect.left - labelOffset;
         const newTimeMs = Math.max(
           0,
           Math.min(relativeX / pxPerMs, totalDurationMs),
@@ -51,7 +53,7 @@ export default function Playhead({
       document.addEventListener("mousemove", handleMouseMove);
       document.addEventListener("mouseup", handleMouseUp);
     },
-    [pxPerMs, totalDurationMs, onSeek],
+    [pxPerMs, totalDurationMs, onSeek, labelOffset],
   );
 
   const handleKeyDown = useCallback(

@@ -82,6 +82,10 @@ export default function EditorView() {
   const micAudioRef = useRef<HTMLAudioElement>(null);
   const systemAudioRef = useRef<HTMLAudioElement>(null);
 
+  // Audio offset state - compensates for audio starting later than video during recording
+  const [micAudioOffset, setMicAudioOffset] = useState(0);
+  const [systemAudioOffset, setSystemAudioOffset] = useState(0);
+
   // Cursor smoothing state
   const [cursorSize] = useState(3.0);
   const [smoothingEnabled] = useState(true);
@@ -381,27 +385,60 @@ export default function EditorView() {
     };
   }, [isPlaying, recordingBundle, smoothingEnabled]);
 
-  // Sync audio with video
-  // Using 20ms threshold instead of 100ms to catch smaller drifts
+  // Calculate audio offset when audio metadata loads
+  // If video is longer than audio, audio started late during recording
+  const handleMicAudioLoaded = useCallback(() => {
+    if (micAudioRef.current && recordingBundle) {
+      const videoDuration = recordingBundle.videoMetadata.durationMs / 1000;
+      const audioDuration = micAudioRef.current.duration;
+      if (audioDuration && !isNaN(audioDuration)) {
+        const offset = videoDuration - audioDuration;
+        setMicAudioOffset(offset > 0 ? offset : 0);
+        console.log(
+          `Mic audio offset calculated: ${offset.toFixed(3)}s (video: ${videoDuration.toFixed(3)}s, audio: ${audioDuration.toFixed(3)}s)`,
+        );
+      }
+    }
+  }, [recordingBundle]);
+
+  const handleSystemAudioLoaded = useCallback(() => {
+    if (systemAudioRef.current && recordingBundle) {
+      const videoDuration = recordingBundle.videoMetadata.durationMs / 1000;
+      const audioDuration = systemAudioRef.current.duration;
+      if (audioDuration && !isNaN(audioDuration)) {
+        const offset = videoDuration - audioDuration;
+        setSystemAudioOffset(offset > 0 ? offset : 0);
+        console.log(
+          `System audio offset calculated: ${offset.toFixed(3)}s (video: ${videoDuration.toFixed(3)}s, audio: ${audioDuration.toFixed(3)}s)`,
+        );
+      }
+    }
+  }, [recordingBundle]);
+
+  // Sync audio with video, applying offset compensation
+  // Audio started late during recording, so at video time T, audio should be at T - offset
   const syncAudio = useCallback(() => {
     if (!videoRef.current) return;
 
     const videoTime = videoRef.current.currentTime;
 
     if (micAudioRef.current) {
-      const diff = Math.abs(micAudioRef.current.currentTime - videoTime);
+      // Apply offset: audio started late, so it should be behind video by the offset amount
+      const targetTime = Math.max(0, videoTime - micAudioOffset);
+      const diff = Math.abs(micAudioRef.current.currentTime - targetTime);
       if (diff > 0.02) {
-        micAudioRef.current.currentTime = videoTime;
+        micAudioRef.current.currentTime = targetTime;
       }
     }
 
     if (systemAudioRef.current) {
-      const diff = Math.abs(systemAudioRef.current.currentTime - videoTime);
+      const targetTime = Math.max(0, videoTime - systemAudioOffset);
+      const diff = Math.abs(systemAudioRef.current.currentTime - targetTime);
       if (diff > 0.02) {
-        systemAudioRef.current.currentTime = videoTime;
+        systemAudioRef.current.currentTime = targetTime;
       }
     }
-  }, []);
+  }, [micAudioOffset, systemAudioOffset]);
 
   // Handle play/pause
   const handlePlayPause = useCallback(async () => {
@@ -734,12 +771,22 @@ export default function EditorView() {
 
           {/* Hidden audio elements */}
           {micAudioSrc && (
-            <audio ref={micAudioRef} src={micAudioSrc} preload="auto">
+            <audio
+              ref={micAudioRef}
+              src={micAudioSrc}
+              preload="auto"
+              onLoadedMetadata={handleMicAudioLoaded}
+            >
               <track kind="captions" />
             </audio>
           )}
           {systemAudioSrc && (
-            <audio ref={systemAudioRef} src={systemAudioSrc} preload="auto">
+            <audio
+              ref={systemAudioRef}
+              src={systemAudioSrc}
+              preload="auto"
+              onLoadedMetadata={handleSystemAudioLoaded}
+            >
               <track kind="captions" />
             </audio>
           )}

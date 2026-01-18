@@ -16,6 +16,8 @@ import {
   X,
 } from "lucide-react";
 import { useProjectStore } from "../../stores/projectStore";
+import type { Slice } from "../../types/project";
+import type { TrackEdits, ExportSegment } from "../../types/export";
 
 type ExportFormat = "mp4" | "gif" | "webm";
 type ExportQuality = "low" | "medium" | "high" | "lossless";
@@ -124,6 +126,22 @@ function getStageLabel(stage: ExportProgress["stage"]): string {
   }
 }
 
+/**
+ * Convert project slices to TrackEdits format for export.
+ * Values are rounded to integers since Rust expects u64.
+ */
+function slicesToTrackEdits(slices: Slice[]): TrackEdits {
+  return {
+    segments: slices.map(
+      (s): ExportSegment => ({
+        sourceStartMs: Math.round(s.sourceStartMs),
+        sourceEndMs: Math.round(s.sourceEndMs),
+        timeScale: s.timeScale ?? 1.0,
+      }),
+    ),
+  };
+}
+
 export default function ExportDialog({
   isOpen,
   onClose,
@@ -131,7 +149,7 @@ export default function ExportDialog({
   projectName = "Untitled Recording",
   durationMs = 0,
 }: ExportDialogProps) {
-  const { project, projectPath } = useProjectStore();
+  const { project, projectPath, getScreenSlices } = useProjectStore();
   const [selectedPreset, setSelectedPreset] = useState<string>("web-hd");
   const [exportState, setExportState] = useState<ExportState>("idle");
   const [exportProgress, setExportProgress] = useState(0);
@@ -237,9 +255,12 @@ export default function ExportDialog({
         },
       );
 
-      // Start export
-      // Always try to include webcam - the backend will check if the file exists
-      await invoke("start_export", {
+      // Get screen slices and convert to edits
+      const screenSlices = getScreenSlices();
+      const edits = slicesToTrackEdits(screenSlices);
+
+      // Start export with edits (respects trim/cut/speed changes)
+      await invoke("start_export_with_edits", {
         projectDir: projectDir,
         options: {
           format,
@@ -253,6 +274,7 @@ export default function ExportDialog({
           includeMicAudio: true,
           includeSystemAudio: true,
         },
+        edits,
       });
     } catch (e) {
       setExportState("error");
@@ -326,9 +348,9 @@ export default function ExportDialog({
       />
 
       {/* Dialog */}
-      <div className="relative bg-[#1a1a1a] border border-[#333] rounded-xl shadow-2xl w-full max-w-lg mx-4">
+      <div className="relative bg-background border border-border rounded-xl shadow-2xl w-full max-w-lg mx-4">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[#333]">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
           <div>
             <h2 className="text-lg font-semibold text-white">Export Video</h2>
             <p className="text-xs text-white/40">{projectName}</p>
@@ -367,8 +389,8 @@ export default function ExportDialog({
                         }}
                         className={`flex flex-col items-center gap-1.5 p-3 rounded-lg border transition-colors ${
                           isSelected
-                            ? "border-red-500 bg-red-500/10 text-white"
-                            : "border-[#333] hover:border-[#555] text-white/60 hover:text-white"
+                            ? "border-accent bg-accent/10 text-white"
+                            : "border-border hover:border-border/80 text-white/60 hover:text-white"
                         }`}
                       >
                         <Icon className="w-5 h-5" />
@@ -388,7 +410,7 @@ export default function ExportDialog({
                     type="checkbox"
                     checked={useCustom}
                     onChange={(e) => setUseCustom(e.target.checked)}
-                    className="rounded border-[#555] bg-transparent"
+                    className="rounded border-border bg-transparent"
                   />
                   <span className="text-sm text-white/80">
                     Use custom settings
@@ -398,7 +420,7 @@ export default function ExportDialog({
 
               {/* Custom Settings Form */}
               {useCustom && (
-                <div className="grid grid-cols-2 gap-3 p-4 bg-[#222] rounded-lg">
+                <div className="grid grid-cols-2 gap-3 p-4 bg-panel rounded-lg">
                   <div>
                     <label
                       htmlFor="export-format"
@@ -412,7 +434,7 @@ export default function ExportDialog({
                       onChange={(e) =>
                         setCustomFormat(e.target.value as ExportFormat)
                       }
-                      className="w-full bg-[#1a1a1a] border border-[#333] rounded-md px-2 py-1.5 text-sm text-white"
+                      className="w-full bg-background border border-border rounded-md px-2 py-1.5 text-sm text-white"
                     >
                       <option value="mp4">MP4</option>
                       <option value="webm">WebM</option>
@@ -432,7 +454,7 @@ export default function ExportDialog({
                       onChange={(e) =>
                         setCustomQuality(e.target.value as ExportQuality)
                       }
-                      className="w-full bg-[#1a1a1a] border border-[#333] rounded-md px-2 py-1.5 text-sm text-white"
+                      className="w-full bg-background border border-border rounded-md px-2 py-1.5 text-sm text-white"
                     >
                       <option value="low">Low</option>
                       <option value="medium">Medium</option>
@@ -451,7 +473,7 @@ export default function ExportDialog({
                       id="export-resolution"
                       value={customResolution}
                       onChange={(e) => setCustomResolution(e.target.value)}
-                      className="w-full bg-[#1a1a1a] border border-[#333] rounded-md px-2 py-1.5 text-sm text-white"
+                      className="w-full bg-background border border-border rounded-md px-2 py-1.5 text-sm text-white"
                     >
                       <option value="3840x2160">4K</option>
                       <option value="1920x1080">1080p</option>
@@ -470,7 +492,7 @@ export default function ExportDialog({
                       id="export-fps"
                       value={customFps}
                       onChange={(e) => setCustomFps(Number(e.target.value))}
-                      className="w-full bg-[#1a1a1a] border border-[#333] rounded-md px-2 py-1.5 text-sm text-white"
+                      className="w-full bg-background border border-border rounded-md px-2 py-1.5 text-sm text-white"
                     >
                       <option value="60">60</option>
                       <option value="30">30</option>
@@ -482,7 +504,7 @@ export default function ExportDialog({
               )}
 
               {/* Summary */}
-              <div className="flex items-center justify-between text-sm text-white/60 pt-2 border-t border-[#333]">
+              <div className="flex items-center justify-between text-sm text-white/60 pt-2 border-t border-border">
                 <span>
                   {displayFormat} • {displayResolution} • {displayFps}
                 </span>
@@ -510,9 +532,9 @@ export default function ExportDialog({
                 </div>
                 <span className="text-sm text-white/60">{exportProgress}%</span>
               </div>
-              <div className="h-2 bg-[#333] rounded-full overflow-hidden">
+              <div className="h-2 bg-border rounded-full overflow-hidden">
                 <div
-                  className="h-full bg-red-500 transition-all duration-300"
+                  className="h-full bg-accent transition-all duration-300"
                   style={{ width: `${exportProgress}%` }}
                 />
               </div>
@@ -521,7 +543,7 @@ export default function ExportDialog({
 
           {exportState === "complete" && (
             <div className="py-4 text-center space-y-4">
-              <div className="flex items-center justify-center gap-2 text-green-500">
+              <div className="flex items-center justify-center gap-2 text-success">
                 <CheckCircle className="w-6 h-6" />
                 <span className="text-lg font-medium">Export Complete!</span>
               </div>
@@ -533,7 +555,7 @@ export default function ExportDialog({
 
           {exportState === "error" && (
             <div className="py-4 text-center space-y-4">
-              <div className="flex items-center justify-center gap-2 text-red-500">
+              <div className="flex items-center justify-center gap-2 text-destructive">
                 <AlertCircle className="w-6 h-6" />
                 <span className="text-lg font-medium">Export Failed</span>
               </div>
@@ -545,7 +567,7 @@ export default function ExportDialog({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-[#333]">
+        <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-border">
           {exportState === "idle" && (
             <>
               <button
@@ -558,7 +580,7 @@ export default function ExportDialog({
               <button
                 type="button"
                 onClick={handleExport}
-                className="flex items-center gap-2 bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                className="flex items-center gap-2 bg-accent hover:bg-accent/90 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
               >
                 <Film className="w-4 h-4" />
                 Export
@@ -570,7 +592,7 @@ export default function ExportDialog({
             <button
               type="button"
               onClick={handleCancel}
-              className="flex items-center gap-2 px-4 py-2 border border-[#333] rounded-lg text-sm text-white/60 hover:text-white hover:border-[#555] transition-colors"
+              className="flex items-center gap-2 px-4 py-2 border border-border rounded-lg text-sm text-white/60 hover:text-white hover:border-muted-foreground/50 transition-colors"
             >
               <Square className="w-4 h-4" />
               Cancel
@@ -582,7 +604,7 @@ export default function ExportDialog({
               <button
                 type="button"
                 onClick={handleOpenFolder}
-                className="flex items-center gap-2 px-4 py-2 border border-[#333] rounded-lg text-sm text-white/60 hover:text-white hover:border-[#555] transition-colors"
+                className="flex items-center gap-2 px-4 py-2 border border-border rounded-lg text-sm text-white/60 hover:text-white hover:border-muted-foreground/50 transition-colors"
               >
                 <FolderOpen className="w-4 h-4" />
                 Open Folder
@@ -590,7 +612,7 @@ export default function ExportDialog({
               <button
                 type="button"
                 onClick={onClose}
-                className="flex items-center gap-2 bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                className="flex items-center gap-2 bg-accent hover:bg-accent/90 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
               >
                 Done
               </button>
@@ -609,7 +631,7 @@ export default function ExportDialog({
               <button
                 type="button"
                 onClick={() => setExportState("idle")}
-                className="flex items-center gap-2 bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                className="flex items-center gap-2 bg-accent hover:bg-accent/90 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
               >
                 <Film className="w-4 h-4" />
                 Try Again

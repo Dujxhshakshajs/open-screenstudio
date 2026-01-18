@@ -2,7 +2,8 @@
 //!
 //! This module provides Tauri commands for video export functionality.
 
-use crate::export::{ExportOptions, ExportPipeline};
+use crate::export::{export_with_edits, ExportOptions, ExportPipeline, ExportProgress, TrackEdits};
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -107,4 +108,133 @@ pub fn cancel_export(state: State<'_, ExportState>) -> Result<(), String> {
 #[tauri::command]
 pub fn is_exporting(state: State<'_, ExportState>) -> bool {
     state.is_exporting.load(Ordering::Relaxed)
+}
+
+/// Export with edits (trim/cut/speed) using FFmpeg filter_complex
+///
+/// This is a simplified export that applies edits directly via FFmpeg,
+/// without frame-by-frame cursor compositing. Use this for exports
+/// that don't need cursor overlay, or when edits are specified.
+#[tauri::command]
+pub async fn start_export_with_edits(
+    app: AppHandle,
+    state: State<'_, ExportState>,
+    project_dir: String,
+    options: ExportOptions,
+    edits: TrackEdits,
+) -> Result<(), String> {
+    // Check if already exporting
+    if state.is_exporting.load(Ordering::Relaxed) {
+        return Err("An export is already in progress".to_string());
+    }
+
+    // Reset cancel flag
+    state.cancel_flag.store(false, Ordering::Relaxed);
+    state.is_exporting.store(true, Ordering::Relaxed);
+
+    let is_exporting = state.is_exporting.clone();
+
+    tracing::info!("Starting export with edits for project: {}", project_dir);
+    tracing::info!("Export options: {:?}", options);
+    tracing::info!("Edits: {} segments", edits.segments.len());
+
+    // Calculate total output duration for progress reporting
+    let total_duration_ms = edits.total_output_duration_ms();
+    let total_duration_us = total_duration_ms * 1000; // FFmpeg reports in microseconds
+
+    // Build paths - recording files are in the "recording" subdirectory
+    let project_path = PathBuf::from(&project_dir);
+    let recording_dir = project_path.join("recording");
+    let video_path = recording_dir.join("recording-0.mp4");
+    let webcam_video_path = recording_dir.join("recording-0-webcam.mp4");
+    let mic_audio_path = recording_dir.join("recording-0-mic.m4a");
+    let system_audio_path = recording_dir.join("recording-0-system.m4a");
+
+    // Check video exists
+    if !video_path.exists() {
+        is_exporting.store(false, Ordering::Relaxed);
+        return Err(format!("Video file not found: {:?}", video_path));
+    }
+
+    // Run export in background task
+    tauri::async_runtime::spawn(async move {
+        // Start FFmpeg process
+        let result = export_with_edits(
+            &video_path,
+            if webcam_video_path.exists() {
+                Some(webcam_video_path.as_path())
+            } else {
+                None
+            },
+            if mic_audio_path.exists() {
+                Some(mic_audio_path.as_path())
+            } else {
+                None
+            },
+            if system_audio_path.exists() {
+                Some(system_audio_path.as_path())
+            } else {
+                None
+            },
+            &options,
+            &edits,
+        );
+
+        match result {
+            Ok(mut child) => {
+                // Parse progress from stdout
+                if let Some(stdout) = child.stdout.take() {
+                    let reader = BufReader::new(stdout);
+                    for line in reader.lines().map_while(Result::ok) {
+                        if line.starts_with("out_time_us=") {
+                            if let Ok(time_us) = line[12..].parse::<u64>() {
+                                let progress = ExportProgress::encoding(
+                                    time_us / 1000, // Convert to ms as "current frame"
+                                    total_duration_ms,
+                                );
+
+                                if let Err(e) = app.emit("export-progress", &progress) {
+                                    tracing::warn!("Failed to emit export progress: {}", e);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Wait for FFmpeg to complete
+                match child.wait() {
+                    Ok(status) if status.success() => {
+                        tracing::info!("Export with edits completed successfully");
+                        let _ = app.emit("export-progress", ExportProgress::complete());
+                        let _ = app.emit("export-complete", ());
+                    }
+                    Ok(status) => {
+                        let stderr = child
+                            .stderr
+                            .map(|s| {
+                                let mut buf = String::new();
+                                let _ = BufReader::new(s).read_line(&mut buf);
+                                buf
+                            })
+                            .unwrap_or_default();
+                        tracing::error!("FFmpeg exited with status {}: {}", status, stderr);
+                        let _ = app.emit("export-error", format!("FFmpeg failed: {}", stderr));
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to wait for FFmpeg: {}", e);
+                        let _ = app.emit("export-error", e.to_string());
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to start export: {}", e);
+                let _ = app.emit("export-error", e.to_string());
+            }
+        }
+
+        // Mark export as complete
+        is_exporting.store(false, Ordering::Relaxed);
+    });
+
+    Ok(())
 }

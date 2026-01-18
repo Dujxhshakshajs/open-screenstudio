@@ -123,7 +123,7 @@ function LayoutItem({
         tabIndex={0}
         aria-label="Layout start boundary"
         aria-valuenow={layout.startTime}
-        className="absolute left-0 top-0 bottom-0 w-1.5 bg-[--foreground]/10 hover:bg-[--foreground]/30 cursor-ew-resize z-10"
+        className="absolute left-0 top-0 bottom-0 w-1.5 bg-foreground/10 hover:bg-foreground/30 cursor-ew-resize z-10"
         onMouseDown={(e) => handleBoundaryDrag("start", e)}
       />
 
@@ -131,7 +131,7 @@ function LayoutItem({
       <div className="px-2 h-full flex items-center gap-1 overflow-hidden pointer-events-none">
         <LayoutTypeIcon type={layout.type} />
         {width > 80 && (
-          <span className="text-[10px] text-[--foreground]/80 truncate">
+          <span className="text-[10px] text-foreground/80 truncate">
             {getLayoutTypeName(layout.type)}
           </span>
         )}
@@ -143,7 +143,7 @@ function LayoutItem({
         tabIndex={0}
         aria-label="Layout end boundary"
         aria-valuenow={layout.endTime}
-        className="absolute right-0 top-0 bottom-0 w-1.5 bg-[--foreground]/10 hover:bg-[--foreground]/30 cursor-ew-resize z-10"
+        className="absolute right-0 top-0 bottom-0 w-1.5 bg-foreground/10 hover:bg-foreground/30 cursor-ew-resize z-10"
         onMouseDown={(e) => handleBoundaryDrag("end", e)}
       />
     </button>
@@ -172,18 +172,18 @@ export default function LayoutTrack({
   );
 
   return (
-    <div className="flex border-b border-[--border]">
+    <div className="flex border-b border-border">
       {/* Track label */}
       <div
-        className="flex-shrink-0 bg-[--muted] border-r border-[--border] px-2 flex items-center"
+        className="flex-shrink-0 bg-muted border-r border-border px-2 flex items-center"
         style={{ width: 80, height: TIMELINE_TRACK_HEIGHT / 1.5 }}
       >
-        <span className="text-xs text-[--foreground]/60 truncate">Layout</span>
+        <span className="text-xs text-foreground/60 truncate">Layout</span>
       </div>
 
       {/* Track content */}
       <div
-        className="relative flex-1 bg-[--background]"
+        className="relative flex-1 bg-background"
         style={{ width: totalWidth, height: TIMELINE_TRACK_HEIGHT / 1.5 }}
       >
         {layouts.map((layout) => (

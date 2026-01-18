@@ -64,7 +64,7 @@ export default function TimeRuler({
 
   return (
     <div
-      className="relative bg-[--muted] border-b border-[--border] select-none overflow-hidden"
+      className="relative bg-muted border-b border-border select-none overflow-hidden"
       style={{ width: totalWidth, height: TIMELINE_RULER_HEIGHT }}
     >
       {ticks.map(({ timeMs, isMajor }) => {
@@ -80,11 +80,11 @@ export default function TimeRuler({
           >
             <div
               className={`w-px ${
-                isMajor ? "h-3 bg-[--foreground]" : "h-2 bg-[--foreground]/40"
+                isMajor ? "h-3 bg-foreground" : "h-2 bg-foreground/40"
               }`}
             />
             {isMajor && (
-              <span className="text-[11px] text-[--foreground]/60 mt-0.5 tabular-nums">
+              <span className="text-[11px] text-foreground/60 mt-0.5 tabular-nums">
                 {formatTime(timeMs)}
               </span>
             )}
