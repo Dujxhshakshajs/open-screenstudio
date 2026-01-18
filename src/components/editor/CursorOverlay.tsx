@@ -89,10 +89,12 @@ export function CursorOverlay({
   );
 
   // Convert video coordinates to container coordinates
-  // Coordinates from recording are already in video pixel space (Rust applies scale_factor)
-  const smoothedX = position.x * scale + offsetX;
+  // Note: On Retina displays, cursor X coordinates need 2x scaling
+  // to match the video pixel coordinates (Y is already correct from Rust transform)
+  const retinaScaleX = 2; // TODO: Get this from recording metadata
+  const smoothedX = position.x * retinaScaleX * scale + offsetX;
   const smoothedY = position.y * scale + offsetY;
-  const rawX = position.rawX * scale + offsetX;
+  const rawX = position.rawX * retinaScaleX * scale + offsetX;
   const rawY = position.rawY * scale + offsetY;
 
   // Calculate the final cursor scale:
