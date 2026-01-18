@@ -89,13 +89,21 @@ export function CursorOverlay({
   );
 
   // Convert video coordinates to container coordinates
-  // Note: On Retina displays, cursor X coordinates need 2x scaling
-  // to match the video pixel coordinates (Y is already correct from Rust transform)
-  const retinaScaleX = 2; // TODO: Get this from recording metadata
-  const smoothedX = position.x * retinaScaleX * scale + offsetX;
+  // Coordinates from recording are already in video pixel space (Rust applies scale_factor)
+  const smoothedX = position.x * scale + offsetX;
   const smoothedY = position.y * scale + offsetY;
-  const rawX = position.rawX * retinaScaleX * scale + offsetX;
+  const rawX = position.rawX * scale + offsetX;
   const rawY = position.rawY * scale + offsetY;
+
+  // Debug logging
+  console.log("CursorOverlay debug:", {
+    position: { x: position.x, y: position.y, cursorId: position.cursorId },
+    videoSize: { videoWidth, videoHeight },
+    containerSize: { containerWidth, containerHeight },
+    calculated: { scale, offsetX, offsetY, smoothedX, smoothedY },
+    cursorInfo,
+    hasValidCursorImage: !!cursorImageUrls[position.cursorId],
+  });
 
   // Calculate the final cursor scale:
   // - Cursor images from macOS are captured at native pixel resolution (2x on Retina)
@@ -114,10 +122,11 @@ export function CursorOverlay({
   const hotspotOffsetY = cursorInfo ? cursorInfo.hotspotY * cursorScale : 0;
 
   // Check if we have a valid cursor image URL
-  const hasValidCursorImage = !!cursorImageUrl;
+  // DEBUG: Force fallback SVG cursor to test positioning
+  const hasValidCursorImage = false; // !!cursorImageUrl;
 
   return (
-    <div className="absolute inset-0 pointer-events-none overflow-hidden">
+    <div className="absolute inset-0 pointer-events-none">
       {/* Smoothed cursor */}
       {hasValidCursorImage ? (
         <img
