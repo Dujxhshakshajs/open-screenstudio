@@ -1,4 +1,10 @@
 import { useMemo } from "react";
+import {
+  TIMELINE_RULER_HEIGHT,
+  RULER_TARGET_PX_PER_TICK,
+  RULER_NICE_INTERVALS_MS,
+  RULER_MAJOR_TICK_MULTIPLIER,
+} from "./constants";
 
 interface TimeRulerProps {
   durationMs: number;
@@ -24,18 +30,14 @@ function formatTime(ms: number): string {
  * Calculate appropriate tick interval based on zoom level
  */
 function calculateTickInterval(pxPerMs: number): number {
-  // We want ticks roughly every 50-100px
-  const targetPxPerTick = 80;
-  const msPerTick = targetPxPerTick / pxPerMs;
+  const msPerTick = RULER_TARGET_PX_PER_TICK / pxPerMs;
 
-  // Round to nice intervals: 1s, 2s, 5s, 10s, 15s, 30s, 60s
-  const niceIntervals = [1000, 2000, 5000, 10000, 15000, 30000, 60000];
-  for (const interval of niceIntervals) {
+  for (const interval of RULER_NICE_INTERVALS_MS) {
     if (msPerTick <= interval) {
       return interval;
     }
   }
-  return 60000;
+  return RULER_NICE_INTERVALS_MS[RULER_NICE_INTERVALS_MS.length - 1];
 }
 
 export default function TimeRuler({
@@ -47,7 +49,7 @@ export default function TimeRuler({
 
   const ticks = useMemo(() => {
     const result: { timeMs: number; isMajor: boolean }[] = [];
-    const majorInterval = tickInterval * 5; // Every 5th tick is major
+    const majorInterval = tickInterval * RULER_MAJOR_TICK_MULTIPLIER;
 
     for (let time = 0; time <= durationMs; time += tickInterval) {
       result.push({
@@ -62,12 +64,12 @@ export default function TimeRuler({
 
   return (
     <div
-      className="relative h-6 bg-[--muted] border-b border-[--border] select-none overflow-hidden"
-      style={{ width: totalWidth }}
+      className="relative bg-[--muted] border-b border-[--border] select-none overflow-hidden"
+      style={{ width: totalWidth, height: TIMELINE_RULER_HEIGHT }}
     >
       {ticks.map(({ timeMs, isMajor }) => {
         const x = timeMs * pxPerMs - offsetX;
-        // Only render visible ticks
+        // Only render visible ticks (with some buffer)
         if (x < -50 || x > totalWidth + 50) return null;
 
         return (
@@ -77,10 +79,12 @@ export default function TimeRuler({
             style={{ left: x }}
           >
             <div
-              className={`w-px ${isMajor ? "h-3 bg-[--foreground]" : "h-2 bg-[--foreground]/50"}`}
+              className={`w-px ${
+                isMajor ? "h-3 bg-[--foreground]" : "h-2 bg-[--foreground]/40"
+              }`}
             />
             {isMajor && (
-              <span className="text-[10px] text-[--foreground]/70 mt-0.5">
+              <span className="text-[11px] text-[--foreground]/60 mt-0.5 tabular-nums">
                 {formatTime(timeMs)}
               </span>
             )}

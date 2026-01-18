@@ -535,7 +535,7 @@ export default function EditorView() {
         <button
           type="button"
           onClick={() => setShowExportDialog(true)}
-          className="flex items-center gap-2 bg-red-500 hover:bg-red-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium transition-colors"
+          className="flex items-center gap-2 bg-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive))]/90 text-[hsl(var(--destructive-foreground))] px-4 py-1.5 rounded-lg text-sm font-medium transition-colors"
         >
           <Download className="w-4 h-4" />
           Export

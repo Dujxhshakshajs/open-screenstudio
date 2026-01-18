@@ -1,6 +1,11 @@
 import { useCallback, memo } from "react";
 import type { Slice } from "../../../types/project";
 import { useEditorStore } from "../../../stores/editorStore";
+import {
+  SLICE_MIN_WIDTH,
+  SLICE_TRIM_HANDLE_WIDTH,
+  SLICE_MIN_DURATION_MS,
+} from "./constants";
 
 interface SliceItemProps {
   slice: Slice;
@@ -43,9 +48,8 @@ function SliceItem({
   const width = outputDurationMs * pxPerMs;
   const left = outputStartMs * pxPerMs;
 
-  // Minimum width for trim handles
-  const minHandleWidth = 8;
-  const showHandles = width > minHandleWidth * 3;
+  // Show handles only if slice is wide enough
+  const showHandles = width > SLICE_TRIM_HANDLE_WIDTH * 3;
 
   // Trim start handle
   const handleTrimStart = useCallback(
@@ -56,7 +60,7 @@ function SliceItem({
       const startX = e.clientX;
       const originalSourceStart = slice.sourceStartMs;
       const minSourceStart = 0;
-      const maxSourceStart = slice.sourceEndMs - 100; // Min 100ms duration
+      const maxSourceStart = slice.sourceEndMs - SLICE_MIN_DURATION_MS;
 
       const handleMouseMove = (moveEvent: MouseEvent) => {
         const deltaX = moveEvent.clientX - startX;
@@ -90,7 +94,7 @@ function SliceItem({
 
       const startX = e.clientX;
       const originalSourceEnd = slice.sourceEndMs;
-      const minSourceEnd = slice.sourceStartMs + 100; // Min 100ms duration
+      const minSourceEnd = slice.sourceStartMs + SLICE_MIN_DURATION_MS;
 
       const handleMouseMove = (moveEvent: MouseEvent) => {
         const deltaX = moveEvent.clientX - startX;
@@ -116,15 +120,14 @@ function SliceItem({
   return (
     <button
       type="button"
-      className={`absolute top-1 bottom-1 rounded-md overflow-hidden cursor-pointer transition-shadow border-0 p-0 text-left ${
+      className={`absolute top-1 bottom-1 rounded-md overflow-hidden cursor-pointer transition-all border-0 p-0 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] ${
         isSelected
-          ? "ring-2 ring-blue-500 shadow-lg"
-          : "hover:ring-1 hover:ring-blue-400"
+          ? "ring-2 ring-[hsl(var(--timeline-selection))] shadow-lg bg-[hsl(var(--timeline-slice-selected))]"
+          : "hover:ring-1 hover:ring-[hsl(var(--timeline-selection))/50] bg-[hsl(var(--timeline-slice))]"
       }`}
       style={{
         left,
-        width: Math.max(width, 20), // Minimum visible width
-        backgroundColor: "var(--accent)",
+        width: Math.max(width, SLICE_MIN_WIDTH),
       }}
       onClick={onSelect}
     >
@@ -135,17 +138,26 @@ function SliceItem({
           aria-label="Trim start"
           aria-valuenow={slice.sourceStartMs}
           tabIndex={0}
-          className="absolute left-0 top-0 bottom-0 w-2 bg-white/20 hover:bg-white/40 cursor-ew-resize z-10"
+          className="absolute left-0 top-0 bottom-0 bg-[--foreground]/10 hover:bg-[--foreground]/30 cursor-ew-resize z-10 transition-colors"
+          style={{ width: SLICE_TRIM_HANDLE_WIDTH }}
           onMouseDown={handleTrimStart}
+          onKeyDown={(e) => {
+            // Allow keyboard adjustment
+            if (e.key === "ArrowLeft") {
+              onTrimStart(slice.sourceStartMs - 100);
+            } else if (e.key === "ArrowRight") {
+              onTrimStart(slice.sourceStartMs + 100);
+            }
+          }}
         />
       )}
 
       {/* Slice content */}
       <div className="px-2 py-1 h-full flex flex-col justify-center overflow-hidden pointer-events-none">
-        <span className="text-xs font-medium text-white truncate">
+        <span className="text-xs font-medium text-[--foreground] truncate">
           Clip {index + 1}
         </span>
-        <span className="text-[10px] text-white/70 truncate">
+        <span className="text-[11px] text-[--foreground]/60 truncate">
           {formatDuration(outputDurationMs)}
         </span>
       </div>
@@ -157,14 +169,22 @@ function SliceItem({
           aria-label="Trim end"
           aria-valuenow={slice.sourceEndMs}
           tabIndex={0}
-          className="absolute right-0 top-0 bottom-0 w-2 bg-white/20 hover:bg-white/40 cursor-ew-resize z-10"
+          className="absolute right-0 top-0 bottom-0 bg-[--foreground]/10 hover:bg-[--foreground]/30 cursor-ew-resize z-10 transition-colors"
+          style={{ width: SLICE_TRIM_HANDLE_WIDTH }}
           onMouseDown={handleTrimEnd}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowLeft") {
+              onTrimEnd(slice.sourceEndMs - 100);
+            } else if (e.key === "ArrowRight") {
+              onTrimEnd(slice.sourceEndMs + 100);
+            }
+          }}
         />
       )}
 
       {/* Speed indicator if not 1x */}
       {slice.timeScale !== 1 && (
-        <div className="absolute bottom-1 right-2 text-[9px] bg-black/50 px-1 rounded text-white">
+        <div className="absolute bottom-1 right-2 text-[10px] bg-[--background]/80 px-1 rounded text-[--foreground]/80">
           {slice.timeScale}x
         </div>
       )}

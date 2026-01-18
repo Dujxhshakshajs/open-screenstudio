@@ -1,4 +1,5 @@
 import { useCallback, useRef } from "react";
+import { PLAYHEAD_WIDTH, PLAYHEAD_HEAD_SIZE } from "./constants";
 
 interface PlayheadProps {
   timeMs: number;
@@ -53,34 +54,53 @@ export default function Playhead({
     [pxPerMs, totalDurationMs, onSeek],
   );
 
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      const step = e.shiftKey ? 1000 : 100; // 1s or 100ms
+      if (e.key === "ArrowLeft") {
+        onSeek(Math.max(0, timeMs - step));
+      } else if (e.key === "ArrowRight") {
+        onSeek(Math.min(totalDurationMs, timeMs + step));
+      }
+    },
+    [timeMs, totalDurationMs, onSeek],
+  );
+
   return (
     <div
       ref={containerRef}
       role="slider"
-      aria-label="Playhead"
-      aria-valuenow={timeMs}
+      aria-label="Playhead position"
+      aria-valuenow={Math.round(timeMs)}
       aria-valuemin={0}
-      aria-valuemax={totalDurationMs}
+      aria-valuemax={Math.round(totalDurationMs)}
+      aria-valuetext={`${(timeMs / 1000).toFixed(1)} seconds`}
       tabIndex={0}
-      className="absolute top-0 z-20 pointer-events-auto cursor-ew-resize"
+      className="absolute top-0 z-20 pointer-events-auto cursor-ew-resize focus:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]"
       style={{
-        left: x - 6,
+        left: x - PLAYHEAD_WIDTH / 2,
         height,
-        width: 12,
+        width: PLAYHEAD_WIDTH,
       }}
       onMouseDown={handleMouseDown}
+      onKeyDown={handleKeyDown}
     >
       {/* Playhead handle (triangle at top) */}
       <div
-        className="absolute top-0 left-1/2 -translate-x-1/2 w-3 h-3 bg-red-500"
+        className="absolute top-0 left-1/2 -translate-x-1/2 bg-[hsl(var(--timeline-playhead))]"
         style={{
+          width: PLAYHEAD_HEAD_SIZE,
+          height: PLAYHEAD_HEAD_SIZE,
           clipPath: "polygon(0 0, 100% 0, 50% 100%)",
         }}
       />
       {/* Vertical line */}
       <div
-        className="absolute top-3 left-1/2 -translate-x-1/2 w-0.5 bg-red-500"
-        style={{ height: height - 12 }}
+        className="absolute left-1/2 -translate-x-1/2 w-0.5 bg-[hsl(var(--timeline-playhead))]"
+        style={{
+          top: PLAYHEAD_HEAD_SIZE,
+          height: height - PLAYHEAD_HEAD_SIZE,
+        }}
       />
     </div>
   );

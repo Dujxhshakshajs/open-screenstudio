@@ -1,4 +1,5 @@
 import { useCallback, useRef, useMemo } from "react";
+import { Scissors, MousePointer, Move } from "lucide-react";
 import type { Slice, Layout } from "../../../types/project";
 import { useEditorStore } from "../../../stores/editorStore";
 import { useProjectStore } from "../../../stores/projectStore";
@@ -10,6 +11,13 @@ import TimeRuler from "./TimeRuler";
 import TimelineTrack from "./TimelineTrack";
 import SliceItem from "./SliceItem";
 import Playhead from "./Playhead";
+import {
+  TIMELINE_TRACK_HEIGHT,
+  TIMELINE_RULER_HEIGHT,
+  TIMELINE_PADDING,
+  ZOOM_STEP,
+  BASE_PX_PER_MS,
+} from "./constants";
 
 interface TimelineProps {
   slices: Slice[];
@@ -30,10 +38,8 @@ export default function Timeline({
   const { updateSlice, splitSlice, activeSceneIndex } = useProjectStore();
 
   // Calculate pixels per millisecond based on zoom
-  // At zoom=1, aim for 100px per second
   const pxPerMs = useMemo(() => {
-    const basePxPerMs = 0.1; // 100px per second
-    return basePxPerMs * timelineZoom;
+    return BASE_PX_PER_MS * timelineZoom;
   }, [timelineZoom]);
 
   // Get computed render info for slices
@@ -46,10 +52,9 @@ export default function Timeline({
   );
   const totalWidth = Math.max(totalDurationMs * pxPerMs, 400);
 
-  // Track height
-  const trackHeight = 48;
-  const rulerHeight = 24;
-  const totalHeight = rulerHeight + trackHeight + 8; // Extra padding
+  // Calculate total height
+  const totalHeight =
+    TIMELINE_RULER_HEIGHT + TIMELINE_TRACK_HEIGHT + TIMELINE_PADDING;
 
   // Handle click on empty timeline area (seek)
   const handleTimelineClick = useCallback(
@@ -60,7 +65,6 @@ export default function Timeline({
 
       // If split tool is active, split the slice at this time
       if (activeTool === "split") {
-        // Find which slice contains this time
         for (const info of sliceRenderInfos) {
           if (timeMs >= info.outputStartMs && timeMs < info.outputEndMs) {
             splitSlice(activeSceneIndex, info.slice.id, timeMs);
@@ -82,7 +86,7 @@ export default function Timeline({
     ],
   );
 
-  // Handle slice trim start
+  // Handle slice trim
   const handleTrimStart = useCallback(
     (sliceId: string, newSourceStartMs: number) => {
       updateSlice(activeSceneIndex, sliceId, {
@@ -92,7 +96,6 @@ export default function Timeline({
     [updateSlice, activeSceneIndex],
   );
 
-  // Handle slice trim end
   const handleTrimEnd = useCallback(
     (sliceId: string, newSourceEndMs: number) => {
       updateSlice(activeSceneIndex, sliceId, { sourceEndMs: newSourceEndMs });
@@ -100,69 +103,81 @@ export default function Timeline({
     [updateSlice, activeSceneIndex],
   );
 
+  // Zoom handlers
+  const handleZoomIn = useCallback(() => {
+    useEditorStore.getState().setTimelineZoom(timelineZoom * ZOOM_STEP);
+  }, [timelineZoom]);
+
+  const handleZoomOut = useCallback(() => {
+    useEditorStore.getState().setTimelineZoom(timelineZoom / ZOOM_STEP);
+  }, [timelineZoom]);
+
   return (
     <div className="flex flex-col bg-[--muted] border-t border-[--border]">
       {/* Toolbar */}
-      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-[--border] bg-[--background]">
+      <div className="flex items-center gap-1 px-3 py-1.5 border-b border-[--border] bg-[--background]">
+        {/* Tool buttons */}
         <button
           type="button"
-          className={`px-2 py-1 text-xs rounded ${
+          title="Select tool (V)"
+          className={`p-1.5 rounded transition-colors ${
             activeTool === "select"
-              ? "bg-blue-500 text-white"
-              : "bg-[--muted] text-[--foreground] hover:bg-[--accent]"
+              ? "bg-[hsl(var(--timeline-selection))] text-white"
+              : "text-[--foreground]/70 hover:bg-[--accent] hover:text-[--foreground]"
           }`}
           onClick={() => setActiveTool("select")}
         >
-          Select
+          <MousePointer className="w-4 h-4" />
         </button>
         <button
           type="button"
-          className={`px-2 py-1 text-xs rounded ${
+          title="Split tool (S)"
+          className={`p-1.5 rounded transition-colors ${
             activeTool === "split"
-              ? "bg-blue-500 text-white"
-              : "bg-[--muted] text-[--foreground] hover:bg-[--accent]"
+              ? "bg-[hsl(var(--timeline-selection))] text-white"
+              : "text-[--foreground]/70 hover:bg-[--accent] hover:text-[--foreground]"
           }`}
           onClick={() => setActiveTool("split")}
         >
-          Split
+          <Scissors className="w-4 h-4" />
         </button>
         <button
           type="button"
-          className={`px-2 py-1 text-xs rounded ${
+          title="Trim tool (T)"
+          className={`p-1.5 rounded transition-colors ${
             activeTool === "trim"
-              ? "bg-blue-500 text-white"
-              : "bg-[--muted] text-[--foreground] hover:bg-[--accent]"
+              ? "bg-[hsl(var(--timeline-selection))] text-white"
+              : "text-[--foreground]/70 hover:bg-[--accent] hover:text-[--foreground]"
           }`}
           onClick={() => setActiveTool("trim")}
         >
-          Trim
+          <Move className="w-4 h-4" />
         </button>
 
         <div className="flex-1" />
 
         {/* Zoom controls */}
-        <span className="text-xs text-[--foreground]/70">Zoom:</span>
-        <button
-          type="button"
-          className="px-2 py-1 text-xs bg-[--muted] rounded hover:bg-[--accent]"
-          onClick={() =>
-            useEditorStore.getState().setTimelineZoom(timelineZoom / 1.5)
-          }
-        >
-          -
-        </button>
-        <span className="text-xs w-10 text-center">
-          {Math.round(timelineZoom * 100)}%
-        </span>
-        <button
-          type="button"
-          className="px-2 py-1 text-xs bg-[--muted] rounded hover:bg-[--accent]"
-          onClick={() =>
-            useEditorStore.getState().setTimelineZoom(timelineZoom * 1.5)
-          }
-        >
-          +
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            title="Zoom out"
+            className="px-2 py-1 text-sm rounded text-[--foreground]/70 hover:bg-[--accent] hover:text-[--foreground] transition-colors"
+            onClick={handleZoomOut}
+          >
+            -
+          </button>
+          <span className="text-xs text-[--foreground]/70 w-12 text-center tabular-nums">
+            {Math.round(timelineZoom * 100)}%
+          </span>
+          <button
+            type="button"
+            title="Zoom in"
+            className="px-2 py-1 text-sm rounded text-[--foreground]/70 hover:bg-[--accent] hover:text-[--foreground] transition-colors"
+            onClick={handleZoomIn}
+          >
+            +
+          </button>
+        </div>
       </div>
 
       {/* Timeline content */}
@@ -191,7 +206,7 @@ export default function Timeline({
             onClick={handleTimelineClick}
             aria-label="Timeline track - click to seek or split"
           >
-            <TimelineTrack label="Video" height={trackHeight}>
+            <TimelineTrack label="Video" height={TIMELINE_TRACK_HEIGHT}>
               {sliceRenderInfos.map((info) => (
                 <SliceItem
                   key={info.slice.id}

@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { TIMELINE_LABEL_WIDTH } from "./constants";
 
 interface TimelineTrackProps {
   label: string;
@@ -15,10 +16,10 @@ export default function TimelineTrack({
     <div className="flex border-b border-[--border]">
       {/* Track label */}
       <div
-        className="flex-shrink-0 w-20 bg-[--muted] border-r border-[--border] px-2 flex items-center"
-        style={{ height }}
+        className="flex-shrink-0 bg-[--muted] border-r border-[--border] px-2 flex items-center"
+        style={{ width: TIMELINE_LABEL_WIDTH, height }}
       >
-        <span className="text-xs text-[--foreground]/70 truncate">{label}</span>
+        <span className="text-xs text-[--foreground]/60 truncate">{label}</span>
       </div>
 
       {/* Track content area */}
