@@ -131,7 +131,7 @@
     align-items: flex-start;
     justify-content: center;
     background: transparent !important;
-    padding: 4px 40px;
+    padding: 4px 8px;
     box-sizing: border-box;
   }
 
@@ -144,14 +144,11 @@
     background: rgba(30, 30, 30, 0.95);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    box-shadow: none;
     white-space: nowrap;
     flex-shrink: 0;
-    /* Explicitly remove any possible border */
-    border: none !important;
-    border-width: 0 !important;
-    border-style: none !important;
-    border-color: transparent !important;
+    /* Subtle rounded border */
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
     outline: none !important;
     outline-width: 0 !important;
     -webkit-appearance: none;
@@ -163,7 +160,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 4px 2px;
+    padding: 4px 6px;
     color: rgba(255, 255, 255, 0.3);
     cursor: grab;
     flex-shrink: 0;
