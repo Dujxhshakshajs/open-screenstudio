@@ -10,8 +10,10 @@ pub mod processing;
 pub mod project;
 pub mod recorder;
 pub mod utils;
+pub mod waveform;
 
 use commands::export::ExportState;
+use commands::project::AppState;
 use commands::recording::RecorderState;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -35,12 +37,19 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .manage(RecorderState::default())
         .manage(ExportState::default())
+        .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             // Project commands
             commands::project::create_project,
             commands::project::open_project,
             commands::project::save_project,
             commands::project::get_project,
+            commands::project::get_project_path,
+            commands::project::get_default_projects_dir,
+            commands::project::create_project_from_recording,
+            commands::project::save_project_to_path,
+            commands::project::auto_save_project,
+            commands::project::update_project,
             // System commands
             commands::system::get_system_info,
             // Recording commands
@@ -73,8 +82,11 @@ pub fn run() {
             commands::window::restore_toolbar,
             // Export commands
             commands::export::start_export,
+            commands::export::start_export_with_edits,
             commands::export::cancel_export,
             commands::export::is_exporting,
+            // Waveform commands
+            waveform::get_waveform,
         ])
         .setup(|app| {
             // Set up transparent background for toolbar window on macOS

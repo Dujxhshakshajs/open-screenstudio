@@ -5,6 +5,7 @@ import {
   SkipForward,
   Loader2,
   Download,
+  FolderOpen,
 } from "lucide-react";
 import ExportDialog from "../export/ExportDialog";
 import { useProjectStore } from "../../stores/projectStore";
@@ -43,8 +44,15 @@ import {
 import { findLayoutAtTime } from "../../utils/layoutUtils";
 
 export default function EditorView() {
-  const { project, initializeFromRecording, getSlices, getLayouts } =
-    useProjectStore();
+  const {
+    project,
+    projectPath,
+    initializeFromRecording,
+    getScreenSlices,
+    getCameraSlices,
+    getLayouts,
+    openProject,
+  } = useProjectStore();
 
   const {
     currentTimeMs,
@@ -93,8 +101,12 @@ export default function EditorView() {
   const [previewSize, setPreviewSize] = useState({ width: 800, height: 450 });
 
   // Get slices and layouts from store
-  const slices = getSlices();
+  // Use screen slices as the primary timeline reference (they should stay in sync)
+  const screenSlices = getScreenSlices();
+  const cameraSlices = getCameraSlices();
   const layouts = getLayouts();
+  // For backward compat with existing code that expects a single slices array
+  const slices = screenSlices;
 
   // Calculate source time from output time using slices
   const { sliceIndex, sourceTimeMs } = useMemo(() => {
@@ -522,7 +534,7 @@ export default function EditorView() {
 
   // Keyboard shortcuts
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
+    const handleKeyDown = async (e: KeyboardEvent) => {
       // Don't trigger shortcuts when typing in inputs
       if (
         e.target instanceof HTMLInputElement ||
@@ -532,8 +544,19 @@ export default function EditorView() {
       }
 
       const { setActiveTool, selectedSliceId } = useEditorStore.getState();
-      const { removeSlice, splitSlice, activeSceneIndex } =
-        useProjectStore.getState();
+      const {
+        removeSlice,
+        splitAllTracksAt,
+        activeSceneIndex,
+        openProject: open,
+      } = useProjectStore.getState();
+
+      // Cmd/Ctrl+O - Open
+      if ((e.metaKey || e.ctrlKey) && e.key === "o") {
+        e.preventDefault();
+        await open();
+        return;
+      }
 
       switch (e.key) {
         case " ": // Space - play/pause
@@ -569,27 +592,8 @@ export default function EditorView() {
           if (e.shiftKey) {
             setActiveTool("split");
           } else {
-            // Split the slice at current playhead position
-            const sliceInfos = slices.map((slice, index) => {
-              let outputStart = 0;
-              for (let i = 0; i < index; i++) {
-                const s = slices[i];
-                outputStart += (s.sourceEndMs - s.sourceStartMs) / s.timeScale;
-              }
-              const duration =
-                (slice.sourceEndMs - slice.sourceStartMs) / slice.timeScale;
-              return { slice, outputStart, outputEnd: outputStart + duration };
-            });
-
-            for (const info of sliceInfos) {
-              if (
-                currentTimeMs >= info.outputStart &&
-                currentTimeMs < info.outputEnd
-              ) {
-                splitSlice(activeSceneIndex, info.slice.id, currentTimeMs);
-                break;
-              }
-            }
+            // Split all tracks at current playhead position (linked split)
+            splitAllTracksAt(activeSceneIndex, currentTimeMs);
           }
           break;
 
@@ -652,17 +656,40 @@ export default function EditorView() {
     <div className="h-screen flex flex-col bg-[--background]">
       {/* Header Bar */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-[--border]">
-        <span className="text-sm text-[--foreground]/60">
-          {project?.name || "Untitled Recording"}
-        </span>
-        <button
-          type="button"
-          onClick={() => setShowExportDialog(true)}
-          className="flex items-center gap-2 bg-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive))]/90 text-[hsl(var(--destructive-foreground))] px-4 py-1.5 rounded-lg text-sm font-medium transition-colors"
-        >
-          <Download className="w-4 h-4" />
-          Export
-        </button>
+        <div className="flex items-center gap-4">
+          <span className="text-sm text-[--foreground]/60">
+            {project?.name || "Untitled Recording"}
+          </span>
+          {projectPath && (
+            <span
+              className="text-xs text-[--foreground]/30 truncate max-w-[200px]"
+              title={projectPath}
+            >
+              {projectPath.split("/").pop()}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {/* Open button */}
+          <button
+            type="button"
+            onClick={() => openProject()}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-[--foreground]/70 hover:text-[--foreground] hover:bg-[--accent] transition-colors"
+            title="Open Project (Cmd+O)"
+          >
+            <FolderOpen className="w-4 h-4" />
+            Open
+          </button>
+          {/* Export button */}
+          <button
+            type="button"
+            onClick={() => setShowExportDialog(true)}
+            className="flex items-center gap-2 bg-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive))]/90 text-[hsl(var(--destructive-foreground))] px-4 py-1.5 rounded-lg text-sm font-medium transition-colors"
+          >
+            <Download className="w-4 h-4" />
+            Export
+          </button>
+        </div>
       </div>
 
       {/* Main Preview Area */}
@@ -758,12 +785,14 @@ export default function EditorView() {
       </div>
 
       {/* Timeline */}
-      {slices.length > 0 && (
+      {screenSlices.length > 0 && (
         <Timeline
-          slices={slices}
-          layouts={layouts}
+          screenSlices={screenSlices}
+          cameraSlices={cameraSlices}
           currentTimeMs={currentTimeMs}
           onSeek={handleSeek}
+          systemAudioPath={recordingBundle?.systemAudioPath ?? undefined}
+          micAudioPath={recordingBundle?.micAudioPath ?? undefined}
         />
       )}
 

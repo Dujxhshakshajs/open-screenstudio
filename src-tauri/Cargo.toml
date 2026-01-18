@@ -43,6 +43,7 @@ async-trait = "0.1"
 parking_lot = "0.12"
 tempfile = "3"
 urlencoding = "2"
+dirs = "5"
 
 # Image processing
 png = "0.17"

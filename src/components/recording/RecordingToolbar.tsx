@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import PostRecordingPopup from "./PostRecordingPopup";
 import type { RecordingResult } from "../../types/recording";
+import { useProjectStore } from "../../stores/projectStore";
 
 type RecordingState = "idle" | "recording" | "paused";
 type SourceType = "display" | "window" | "area" | "device";
@@ -243,21 +244,42 @@ export default function RecordingToolbar() {
   };
 
   // Post-recording popup handlers
+  // Save: Creates project and auto-saves to default location, then dismiss
   const handleSave = async () => {
-    // TODO: Implement quick save to Downloads
-    console.log("Save clicked - coming soon");
+    if (!recordingResult) return;
+
+    const { createProjectFromRecording } = useProjectStore.getState();
+
+    try {
+      // Create a project from the recording - auto-saves to ~/Movies/Open ScreenStudio/
+      await createProjectFromRecording(recordingResult.bundlePath);
+      // Dismiss the popup after successful save
+      handleDismissPopup();
+    } catch (err) {
+      console.error("Failed to save recording:", err);
+    }
   };
 
+  // Edit: Creates project, auto-saves, then opens editor
   const handleEdit = async () => {
-    if (recordingResult) {
-      try {
-        await invoke("open_editor_window", {
-          recordingPath: recordingResult.bundlePath,
-        });
-        await invoke("close_toolbar_window");
-      } catch (err) {
-        console.error("Failed to open editor:", err);
-      }
+    if (!recordingResult) return;
+
+    const { createProjectFromRecording } = useProjectStore.getState();
+
+    try {
+      // Create a project from the recording - auto-saves to ~/Movies/Open ScreenStudio/
+      await createProjectFromRecording(recordingResult.bundlePath);
+
+      // Get the saved project path to open in editor
+      const savedPath = useProjectStore.getState().projectPath;
+
+      // Open editor with the saved project
+      await invoke("open_editor_window", {
+        recordingPath: savedPath || recordingResult.bundlePath,
+      });
+      await invoke("close_toolbar_window");
+    } catch (err) {
+      console.error("Failed to open editor:", err);
     }
   };
 
