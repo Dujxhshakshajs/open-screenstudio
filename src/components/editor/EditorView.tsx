@@ -39,6 +39,7 @@ import {
   outputTimeToSource,
   calculateTotalDuration,
 } from "../../utils/sliceUtils";
+import { findLayoutAtTime } from "../../utils/layoutUtils";
 
 export default function EditorView() {
   const { project, initializeFromRecording, getSlices, getLayouts } =
@@ -101,6 +102,11 @@ export default function EditorView() {
     }
     return outputTimeToSource(slices, currentTimeMs);
   }, [slices, currentTimeMs]);
+
+  // Find the current layout at the current output time
+  const currentLayout = useMemo(() => {
+    return findLayoutAtTime(layouts, currentTimeMs);
+  }, [layouts, currentTimeMs]);
 
   // Update total duration when slices change
   useEffect(() => {
@@ -604,6 +610,7 @@ export default function EditorView() {
               videoHeight={videoHeight}
               containerWidth={previewSize.width}
               containerHeight={previewSize.height}
+              currentLayout={currentLayout}
             />
           )}
 

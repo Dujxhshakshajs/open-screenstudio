@@ -11,6 +11,7 @@ import TimeRuler from "./TimeRuler";
 import TimelineTrack from "./TimelineTrack";
 import SliceItem from "./SliceItem";
 import Playhead from "./Playhead";
+import LayoutTrack from "./LayoutTrack";
 import {
   TIMELINE_TRACK_HEIGHT,
   TIMELINE_RULER_HEIGHT,
@@ -28,14 +29,15 @@ interface TimelineProps {
 
 export default function Timeline({
   slices,
-  layouts: _layouts, // Will be used in Phase 4 for LayoutTrack
+  layouts,
   currentTimeMs,
   onSeek,
 }: TimelineProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const { timelineZoom, selectSlice, setActiveTool, activeTool } =
+  const { timelineZoom, selectSlice, selectLayout, setActiveTool, activeTool } =
     useEditorStore();
-  const { updateSlice, splitSlice, activeSceneIndex } = useProjectStore();
+  const { updateSlice, updateLayout, splitSlice, activeSceneIndex } =
+    useProjectStore();
 
   // Calculate pixels per millisecond based on zoom
   const pxPerMs = useMemo(() => {
@@ -52,9 +54,15 @@ export default function Timeline({
   );
   const totalWidth = Math.max(totalDurationMs * pxPerMs, 400);
 
-  // Calculate total height
+  // Layout track height (smaller than video track)
+  const layoutTrackHeight = Math.round(TIMELINE_TRACK_HEIGHT * 0.66);
+
+  // Calculate total height (ruler + video track + layout track + padding)
   const totalHeight =
-    TIMELINE_RULER_HEIGHT + TIMELINE_TRACK_HEIGHT + TIMELINE_PADDING;
+    TIMELINE_RULER_HEIGHT +
+    TIMELINE_TRACK_HEIGHT +
+    layoutTrackHeight +
+    TIMELINE_PADDING;
 
   // Handle click on empty timeline area (seek)
   const handleTimelineClick = useCallback(
@@ -224,6 +232,19 @@ export default function Timeline({
               ))}
             </TimelineTrack>
           </button>
+
+          {/* Layout track */}
+          {layouts.length > 0 && (
+            <LayoutTrack
+              layouts={layouts}
+              pxPerMs={pxPerMs}
+              totalDurationMs={totalDurationMs}
+              onLayoutSelect={selectLayout}
+              onLayoutUpdate={(layoutId, updates) =>
+                updateLayout(activeSceneIndex, layoutId, updates)
+              }
+            />
+          )}
 
           {/* Playhead */}
           <Playhead

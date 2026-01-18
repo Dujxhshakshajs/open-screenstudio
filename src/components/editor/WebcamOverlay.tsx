@@ -1,11 +1,13 @@
 /**
  * WebcamOverlay - Renders the webcam video overlay on top of the screen recording preview
  *
- * Displays the webcam video in the bottom-right corner, scaled to 1/8 of the video width
- * while maintaining the webcam's aspect ratio. Features rounded corners.
+ * Displays the webcam video based on the current layout configuration.
+ * Supports multiple layout types: screen-with-camera, camera-only, side-by-side, screen-only
  */
 
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, useMemo } from "react";
+import type { Layout } from "../../types/project";
+import { calculateLayoutPositions } from "../../utils/layoutUtils";
 
 interface WebcamOverlayProps {
   /** URL to the webcam video source */
@@ -20,10 +22,8 @@ interface WebcamOverlayProps {
   /** Preview container dimensions */
   containerWidth: number;
   containerHeight: number;
-  /** Scale factor for webcam size (default 1/8 = 0.125) */
-  webcamScale?: number;
-  /** Margin from edges in pixels (before container scaling) */
-  margin?: number;
+  /** Current layout (optional - uses default if not provided) */
+  currentLayout?: Layout | null;
   /** Corner radius as percentage of webcam width (default 0.08 = 8%) */
   cornerRadius?: number;
 }
@@ -62,9 +62,8 @@ export function WebcamOverlay({
   videoHeight,
   containerWidth,
   containerHeight,
-  webcamScale = 0.125, // 1/8 of screen width
-  margin = 20,
-  cornerRadius = 0.08, // 8% of webcam width
+  currentLayout,
+  cornerRadius = 0.08,
 }: WebcamOverlayProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [webcamDimensions, setWebcamDimensions] = useState<{
@@ -111,7 +110,7 @@ export function WebcamOverlay({
     }
   };
 
-  // Calculate positioning
+  // Calculate positioning based on video scale
   const { scale, offsetX, offsetY } = calculateVideoScale(
     videoWidth,
     videoHeight,
@@ -119,25 +118,51 @@ export function WebcamOverlay({
     containerHeight,
   );
 
-  // Calculate webcam size (1/8 of the scaled video width)
+  // Get the scaled video dimensions
   const scaledVideoWidth = videoWidth * scale;
   const scaledVideoHeight = videoHeight * scale;
-  const webcamWidth = scaledVideoWidth * webcamScale;
 
-  // Calculate webcam height maintaining aspect ratio
-  const webcamAspectRatio = webcamDimensions
-    ? webcamDimensions.width / webcamDimensions.height
-    : 16 / 9; // Default to 16:9 until we know the actual ratio
-  const webcamHeight = webcamWidth / webcamAspectRatio;
+  // Calculate layout positions within the scaled video area
+  const layoutInfo = useMemo(() => {
+    return calculateLayoutPositions(
+      currentLayout ?? null,
+      scaledVideoWidth,
+      scaledVideoHeight,
+    );
+  }, [currentLayout, scaledVideoWidth, scaledVideoHeight]);
 
-  // Position in bottom-right corner of the video (not container)
-  // The video is centered in the container with offsets
-  const scaledMargin = margin * scale;
-  const webcamX = offsetX + scaledVideoWidth - webcamWidth - scaledMargin;
-  const webcamY = offsetY + scaledVideoHeight - webcamHeight - scaledMargin;
+  // If camera is not visible in this layout, don't render
+  if (!layoutInfo.camera.visible) {
+    return null;
+  }
 
-  // Calculate border radius
-  const borderRadius = webcamWidth * cornerRadius;
+  // Calculate webcam size and position
+  const webcamWidth = layoutInfo.camera.width;
+  const webcamHeight = layoutInfo.camera.height;
+
+  // Adjust for webcam's actual aspect ratio if available
+  let adjustedHeight = webcamHeight;
+  if (
+    webcamDimensions &&
+    layoutInfo.layoutType !== "side-by-side" &&
+    layoutInfo.layoutType !== "camera-only"
+  ) {
+    const webcamAspectRatio = webcamDimensions.width / webcamDimensions.height;
+    adjustedHeight = webcamWidth / webcamAspectRatio;
+  }
+
+  // Final position (add container offset for centering)
+  const webcamX = offsetX + layoutInfo.camera.x;
+  const webcamY = offsetY + layoutInfo.camera.y;
+
+  // Calculate border radius (only for PiP, not side-by-side or fullscreen)
+  const showRoundedCorners = layoutInfo.layoutType === "screen-with-camera";
+  const borderRadius = showRoundedCorners ? webcamWidth * cornerRadius : 0;
+
+  // Different styling for different layout types
+  const isFillMode =
+    layoutInfo.layoutType === "camera-only" ||
+    layoutInfo.layoutType === "side-by-side";
 
   return (
     <div className="absolute inset-0 pointer-events-none overflow-hidden">
@@ -147,15 +172,18 @@ export function WebcamOverlay({
         muted
         playsInline
         onLoadedMetadata={handleLoadedMetadata}
-        className="absolute object-cover"
+        className={`absolute transition-all duration-300 ease-out ${
+          isFillMode ? "object-cover" : "object-cover"
+        }`}
         style={{
           left: webcamX,
           top: webcamY,
           width: webcamWidth,
-          height: webcamHeight,
+          height: isFillMode ? webcamHeight : adjustedHeight,
           borderRadius: borderRadius,
-          // Add a subtle border for better visibility
-          boxShadow: "0 4px 20px rgba(0, 0, 0, 0.4)",
+          boxShadow: showRoundedCorners
+            ? "0 4px 20px rgba(0, 0, 0, 0.4)"
+            : "none",
         }}
       >
         <track kind="captions" />
