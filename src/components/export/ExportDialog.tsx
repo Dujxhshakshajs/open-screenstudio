@@ -1,0 +1,623 @@
+import { useState, useEffect, useRef } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import type { UnlistenFn } from "@tauri-apps/api/event";
+import {
+  Film,
+  Image,
+  Globe,
+  Monitor,
+  Smartphone,
+  Square,
+  CheckCircle,
+  Loader2,
+  AlertCircle,
+  FolderOpen,
+  X,
+} from "lucide-react";
+import { useProjectStore } from "../../stores/projectStore";
+
+type ExportFormat = "mp4" | "gif" | "webm";
+type ExportQuality = "low" | "medium" | "high" | "lossless";
+type ExportState = "idle" | "exporting" | "complete" | "error";
+
+interface ExportPreset {
+  id: string;
+  name: string;
+  icon: typeof Monitor;
+  format: ExportFormat;
+  quality: ExportQuality;
+  // Resolution is now optional - if not specified, uses source resolution
+  // "original" means use source, otherwise "WIDTHxHEIGHT" for specific size
+  resolution?: string;
+  fps?: number; // Optional - if not specified, uses source fps
+}
+
+interface ExportProgress {
+  percent: number;
+  stage: {
+    type:
+      | "preparing"
+      | "smoothingCursor"
+      | "encoding"
+      | "finalizing"
+      | "complete"
+      | "error";
+    message?: string;
+  };
+  currentFrame: number;
+  totalFrames: number;
+}
+
+interface ExportDialogProps {
+  isOpen: boolean;
+  onClose: () => void;
+  recordingPath: string | null;
+  projectName?: string;
+  durationMs?: number;
+}
+
+const presets: ExportPreset[] = [
+  {
+    id: "original",
+    name: "Original",
+    icon: Monitor,
+    format: "mp4",
+    quality: "high",
+    // No resolution/fps = use source (no scaling, no frame rate change)
+  },
+  {
+    id: "web-hd",
+    name: "Web HD",
+    icon: Globe,
+    format: "mp4",
+    quality: "high",
+    resolution: "1920x1080", // Scale to fit 1080p, preserving aspect ratio
+  },
+  {
+    id: "social",
+    name: "Social",
+    icon: Smartphone,
+    format: "mp4",
+    quality: "medium",
+    resolution: "1280x720", // Scale to fit 720p, preserving aspect ratio
+  },
+  {
+    id: "gif",
+    name: "GIF",
+    icon: Image,
+    format: "gif",
+    quality: "medium",
+    resolution: "640x480",
+    fps: 15,
+  },
+];
+
+function parseResolution(resolution?: string): {
+  width: number | null;
+  height: number | null;
+} {
+  if (!resolution) {
+    // No resolution specified = use source (null means "use source")
+    return { width: null, height: null };
+  }
+  const [width, height] = resolution.split("x").map(Number);
+  return { width: width || null, height: height || null };
+}
+
+function getStageLabel(stage: ExportProgress["stage"]): string {
+  switch (stage.type) {
+    case "preparing":
+      return "Preparing...";
+    case "smoothingCursor":
+      return "Smoothing cursor...";
+    case "encoding":
+      return "Encoding video...";
+    case "finalizing":
+      return "Finalizing...";
+    case "complete":
+      return "Complete!";
+    case "error":
+      return `Error: ${stage.message || "Unknown error"}`;
+    default:
+      return "Exporting...";
+  }
+}
+
+export default function ExportDialog({
+  isOpen,
+  onClose,
+  recordingPath,
+  projectName = "Untitled Recording",
+  durationMs = 0,
+}: ExportDialogProps) {
+  const { project, projectPath } = useProjectStore();
+  const [selectedPreset, setSelectedPreset] = useState<string>("web-hd");
+  const [exportState, setExportState] = useState<ExportState>("idle");
+  const [exportProgress, setExportProgress] = useState(0);
+  const [exportStage, setExportStage] = useState<string>("Exporting...");
+  const [errorMessage, setErrorMessage] = useState<string>("");
+  const [outputPath, setOutputPath] = useState<string>("");
+
+  // Custom settings (when not using preset)
+  const [customFormat, setCustomFormat] = useState<ExportFormat>("mp4");
+  const [customQuality, setCustomQuality] = useState<ExportQuality>("high");
+  const [customResolution, setCustomResolution] = useState("1920x1080");
+  const [customFps, setCustomFps] = useState(60);
+  const [useCustom, setUseCustom] = useState(false);
+
+  // Refs for event listeners
+  const unlistenProgressRef = useRef<UnlistenFn | null>(null);
+  const unlistenCompleteRef = useRef<UnlistenFn | null>(null);
+  const unlistenErrorRef = useRef<UnlistenFn | null>(null);
+
+  // Reset state when dialog opens
+  useEffect(() => {
+    if (isOpen) {
+      setExportState("idle");
+      setExportProgress(0);
+      setErrorMessage("");
+    }
+  }, [isOpen]);
+
+  // Cleanup event listeners on unmount
+  useEffect(() => {
+    return () => {
+      unlistenProgressRef.current?.();
+      unlistenCompleteRef.current?.();
+      unlistenErrorRef.current?.();
+    };
+  }, []);
+
+  const handleExport = async () => {
+    // Use recordingPath prop, fall back to project store
+    const projectDir =
+      recordingPath ||
+      projectPath ||
+      (project ? `/tmp/open-screenstudio-${project.id}` : null);
+
+    if (!projectDir) {
+      setExportState("error");
+      setErrorMessage("No recording path available");
+      return;
+    }
+
+    setExportState("exporting");
+    setExportProgress(0);
+    setExportStage("Preparing...");
+    setErrorMessage("");
+
+    // Get current settings
+    const preset = useCustom
+      ? null
+      : presets.find((p) => p.id === selectedPreset);
+    const format = useCustom ? customFormat : preset?.format || "mp4";
+    const quality = useCustom ? customQuality : preset?.quality || "high";
+    // Resolution is optional - undefined/null means use source resolution
+    const resolution = useCustom ? customResolution : preset?.resolution;
+    // FPS is optional - undefined means use source fps
+    const fps = useCustom ? customFps : preset?.fps;
+
+    const { width, height } = parseResolution(resolution);
+
+    const exportOutputPath = `${projectDir}/export.${format}`;
+    setOutputPath(exportOutputPath);
+
+    try {
+      // Set up event listeners
+      unlistenProgressRef.current = await listen<ExportProgress>(
+        "export-progress",
+        (event) => {
+          const progress = event.payload;
+          setExportProgress(Math.round(progress.percent));
+          setExportStage(getStageLabel(progress.stage));
+        },
+      );
+
+      unlistenCompleteRef.current = await listen("export-complete", () => {
+        setExportState("complete");
+        setExportProgress(100);
+        setExportStage("Complete!");
+        // Cleanup listeners
+        unlistenProgressRef.current?.();
+        unlistenCompleteRef.current?.();
+        unlistenErrorRef.current?.();
+      });
+
+      unlistenErrorRef.current = await listen<string>(
+        "export-error",
+        (event) => {
+          setExportState("error");
+          setErrorMessage(event.payload);
+          setExportStage("Error");
+          // Cleanup listeners
+          unlistenProgressRef.current?.();
+          unlistenCompleteRef.current?.();
+          unlistenErrorRef.current?.();
+        },
+      );
+
+      // Start export
+      // Always try to include webcam - the backend will check if the file exists
+      await invoke("start_export", {
+        projectDir: projectDir,
+        options: {
+          format,
+          quality,
+          width,
+          height,
+          fps,
+          outputPath: exportOutputPath,
+          includeCursor: true,
+          includeWebcam: true,
+          includeMicAudio: true,
+          includeSystemAudio: true,
+        },
+      });
+    } catch (e) {
+      setExportState("error");
+      setErrorMessage(e instanceof Error ? e.message : String(e));
+      // Cleanup listeners on error
+      unlistenProgressRef.current?.();
+      unlistenCompleteRef.current?.();
+      unlistenErrorRef.current?.();
+    }
+  };
+
+  const handleCancel = async () => {
+    if (exportState === "exporting") {
+      try {
+        await invoke("cancel_export");
+      } catch (e) {
+        console.error("Failed to cancel export:", e);
+      }
+      // Cleanup listeners
+      unlistenProgressRef.current?.();
+      unlistenCompleteRef.current?.();
+      unlistenErrorRef.current?.();
+    }
+    setExportState("idle");
+    setExportProgress(0);
+    onClose();
+  };
+
+  const handleOpenFolder = async () => {
+    if (!outputPath) return;
+    try {
+      // Open the folder containing the export
+      const folderPath = outputPath.substring(0, outputPath.lastIndexOf("/"));
+      await invoke("plugin:shell|open", { path: folderPath });
+    } catch (e) {
+      console.error("Failed to open folder:", e);
+    }
+  };
+
+  const handleClose = () => {
+    if (exportState === "exporting") {
+      // Don't allow closing while exporting
+      return;
+    }
+    onClose();
+  };
+
+  if (!isOpen) return null;
+
+  const currentPreset = presets.find((p) => p.id === selectedPreset);
+  const displayFormat = useCustom
+    ? customFormat.toUpperCase()
+    : currentPreset?.format.toUpperCase() || "MP4";
+  const displayResolution = useCustom
+    ? customResolution
+    : currentPreset?.resolution || "Original";
+  const displayFps = useCustom
+    ? `${customFps}fps`
+    : currentPreset?.fps
+      ? `${currentPreset.fps}fps`
+      : "Original";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      {/* Backdrop */}
+      <button
+        type="button"
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm cursor-default"
+        onClick={handleClose}
+        aria-label="Close dialog"
+      />
+
+      {/* Dialog */}
+      <div className="relative bg-[#1a1a1a] border border-[#333] rounded-xl shadow-2xl w-full max-w-lg mx-4">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[#333]">
+          <div>
+            <h2 className="text-lg font-semibold text-white">Export Video</h2>
+            <p className="text-xs text-white/40">{projectName}</p>
+          </div>
+          <button
+            type="button"
+            onClick={handleClose}
+            disabled={exportState === "exporting"}
+            className="p-1 rounded-md hover:bg-white/10 transition-colors disabled:opacity-50"
+          >
+            <X className="w-5 h-5 text-white/60" />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="p-5 space-y-5">
+          {exportState === "idle" && (
+            <>
+              {/* Preset Selection */}
+              <div>
+                <span className="text-sm font-medium text-white/80 block mb-2">
+                  Preset
+                </span>
+                <div className="grid grid-cols-4 gap-2">
+                  {presets.map((preset) => {
+                    const Icon = preset.icon;
+                    const isSelected =
+                      !useCustom && selectedPreset === preset.id;
+                    return (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedPreset(preset.id);
+                          setUseCustom(false);
+                        }}
+                        className={`flex flex-col items-center gap-1.5 p-3 rounded-lg border transition-colors ${
+                          isSelected
+                            ? "border-red-500 bg-red-500/10 text-white"
+                            : "border-[#333] hover:border-[#555] text-white/60 hover:text-white"
+                        }`}
+                      >
+                        <Icon className="w-5 h-5" />
+                        <span className="text-xs font-medium">
+                          {preset.name}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Custom Settings Toggle */}
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={useCustom}
+                    onChange={(e) => setUseCustom(e.target.checked)}
+                    className="rounded border-[#555] bg-transparent"
+                  />
+                  <span className="text-sm text-white/80">
+                    Use custom settings
+                  </span>
+                </label>
+              </div>
+
+              {/* Custom Settings Form */}
+              {useCustom && (
+                <div className="grid grid-cols-2 gap-3 p-4 bg-[#222] rounded-lg">
+                  <div>
+                    <label
+                      htmlFor="export-format"
+                      className="text-xs text-white/60 block mb-1"
+                    >
+                      Format
+                    </label>
+                    <select
+                      id="export-format"
+                      value={customFormat}
+                      onChange={(e) =>
+                        setCustomFormat(e.target.value as ExportFormat)
+                      }
+                      className="w-full bg-[#1a1a1a] border border-[#333] rounded-md px-2 py-1.5 text-sm text-white"
+                    >
+                      <option value="mp4">MP4</option>
+                      <option value="webm">WebM</option>
+                      <option value="gif">GIF</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label
+                      htmlFor="export-quality"
+                      className="text-xs text-white/60 block mb-1"
+                    >
+                      Quality
+                    </label>
+                    <select
+                      id="export-quality"
+                      value={customQuality}
+                      onChange={(e) =>
+                        setCustomQuality(e.target.value as ExportQuality)
+                      }
+                      className="w-full bg-[#1a1a1a] border border-[#333] rounded-md px-2 py-1.5 text-sm text-white"
+                    >
+                      <option value="low">Low</option>
+                      <option value="medium">Medium</option>
+                      <option value="high">High</option>
+                      <option value="lossless">Lossless</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label
+                      htmlFor="export-resolution"
+                      className="text-xs text-white/60 block mb-1"
+                    >
+                      Resolution
+                    </label>
+                    <select
+                      id="export-resolution"
+                      value={customResolution}
+                      onChange={(e) => setCustomResolution(e.target.value)}
+                      className="w-full bg-[#1a1a1a] border border-[#333] rounded-md px-2 py-1.5 text-sm text-white"
+                    >
+                      <option value="3840x2160">4K</option>
+                      <option value="1920x1080">1080p</option>
+                      <option value="1280x720">720p</option>
+                      <option value="854x480">480p</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label
+                      htmlFor="export-fps"
+                      className="text-xs text-white/60 block mb-1"
+                    >
+                      FPS
+                    </label>
+                    <select
+                      id="export-fps"
+                      value={customFps}
+                      onChange={(e) => setCustomFps(Number(e.target.value))}
+                      className="w-full bg-[#1a1a1a] border border-[#333] rounded-md px-2 py-1.5 text-sm text-white"
+                    >
+                      <option value="60">60</option>
+                      <option value="30">30</option>
+                      <option value="24">24</option>
+                      <option value="15">15</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+
+              {/* Summary */}
+              <div className="flex items-center justify-between text-sm text-white/60 pt-2 border-t border-[#333]">
+                <span>
+                  {displayFormat} • {displayResolution} • {displayFps}
+                </span>
+                <span>
+                  {durationMs > 0
+                    ? `${Math.round(durationMs / 1000)}s`
+                    : project
+                      ? `${Math.round(
+                          (project.config.recordingRange[1] -
+                            project.config.recordingRange[0]) /
+                            1000,
+                        )}s`
+                      : ""}
+                </span>
+              </div>
+            </>
+          )}
+
+          {exportState === "exporting" && (
+            <div className="py-4 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin text-white" />
+                  <span className="text-sm text-white">{exportStage}</span>
+                </div>
+                <span className="text-sm text-white/60">{exportProgress}%</span>
+              </div>
+              <div className="h-2 bg-[#333] rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-red-500 transition-all duration-300"
+                  style={{ width: `${exportProgress}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {exportState === "complete" && (
+            <div className="py-4 text-center space-y-4">
+              <div className="flex items-center justify-center gap-2 text-green-500">
+                <CheckCircle className="w-6 h-6" />
+                <span className="text-lg font-medium">Export Complete!</span>
+              </div>
+              <p className="text-sm text-white/60">
+                Your video has been exported successfully.
+              </p>
+            </div>
+          )}
+
+          {exportState === "error" && (
+            <div className="py-4 text-center space-y-4">
+              <div className="flex items-center justify-center gap-2 text-red-500">
+                <AlertCircle className="w-6 h-6" />
+                <span className="text-lg font-medium">Export Failed</span>
+              </div>
+              {errorMessage && (
+                <p className="text-sm text-white/60">{errorMessage}</p>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-[#333]">
+          {exportState === "idle" && (
+            <>
+              <button
+                type="button"
+                onClick={handleCancel}
+                className="px-4 py-2 text-sm text-white/60 hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleExport}
+                className="flex items-center gap-2 bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+              >
+                <Film className="w-4 h-4" />
+                Export
+              </button>
+            </>
+          )}
+
+          {exportState === "exporting" && (
+            <button
+              type="button"
+              onClick={handleCancel}
+              className="flex items-center gap-2 px-4 py-2 border border-[#333] rounded-lg text-sm text-white/60 hover:text-white hover:border-[#555] transition-colors"
+            >
+              <Square className="w-4 h-4" />
+              Cancel
+            </button>
+          )}
+
+          {exportState === "complete" && (
+            <>
+              <button
+                type="button"
+                onClick={handleOpenFolder}
+                className="flex items-center gap-2 px-4 py-2 border border-[#333] rounded-lg text-sm text-white/60 hover:text-white hover:border-[#555] transition-colors"
+              >
+                <FolderOpen className="w-4 h-4" />
+                Open Folder
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="flex items-center gap-2 bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+              >
+                Done
+              </button>
+            </>
+          )}
+
+          {exportState === "error" && (
+            <>
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 text-sm text-white/60 hover:text-white transition-colors"
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                onClick={() => setExportState("idle")}
+                className="flex items-center gap-2 bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+              >
+                <Film className="w-4 h-4" />
+                Try Again
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

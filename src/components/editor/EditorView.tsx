@@ -1,9 +1,19 @@
-import { Play, Pause, SkipBack, SkipForward, Loader2 } from "lucide-react";
+import {
+  Play,
+  Pause,
+  SkipBack,
+  SkipForward,
+  Loader2,
+  Download,
+} from "lucide-react";
+import ExportDialog from "../export/ExportDialog";
+import { useProjectStore } from "../../stores/projectStore";
 import { useState, useRef, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { CursorOverlay } from "./CursorOverlay";
 import { ClickIndicator } from "./ClickIndicator";
+import { WebcamOverlay } from "./WebcamOverlay";
 import {
   CursorSmoother,
   type SmoothedPosition,
@@ -20,19 +30,23 @@ import type {
 } from "../../types/recording";
 import {
   findCursorAtTime,
+  findCursorAtTimeInterpolated,
   findRecentClicks,
 } from "../../utils/recordingPlayback";
 
 export default function EditorView() {
+  const { project } = useProjectStore();
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [showExportDialog, setShowExportDialog] = useState(false);
 
   // Recording data
   const [recordingPath, setRecordingPath] = useState<string | null>(null);
   const [recordingBundle, setRecordingBundle] =
     useState<RecordingBundle | null>(null);
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
+  const [webcamSrc, setWebcamSrc] = useState<string | null>(null);
   const [micAudioSrc, setMicAudioSrc] = useState<string | null>(null);
   const [systemAudioSrc, setSystemAudioSrc] = useState<string | null>(null);
   const [isLoadingRecording, setIsLoadingRecording] = useState(true);
@@ -63,6 +77,48 @@ export default function EditorView() {
   const previewRef = useRef<HTMLDivElement>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
   const [previewSize, setPreviewSize] = useState({ width: 800, height: 450 });
+
+  // Helper to update cursor position at a specific time (used for initial load and seeking while paused)
+  const updateCursorForTime = useCallback(
+    (timeMs: number, resetSmoother: boolean = false) => {
+      if (!recordingBundle?.mouseMoves?.length) {
+        return;
+      }
+
+      const cursorAtTime = findCursorAtTimeInterpolated(
+        recordingBundle.mouseMoves,
+        timeMs,
+      );
+
+      if (cursorAtTime) {
+        if (resetSmoother && smootherRef.current) {
+          smootherRef.current.reset(cursorAtTime.x, cursorAtTime.y);
+        }
+
+        if (smootherRef.current && smoothingEnabled) {
+          const newPosition = smootherRef.current.update(
+            {
+              x: cursorAtTime.x,
+              y: cursorAtTime.y,
+              cursorId: cursorAtTime.cursorId,
+              processTimeMs: timeMs,
+            },
+            0, // No delta time for instant update
+          );
+          setCursorPosition(newPosition);
+        } else {
+          setCursorPosition({
+            x: cursorAtTime.x,
+            y: cursorAtTime.y,
+            rawX: cursorAtTime.x,
+            rawY: cursorAtTime.y,
+            cursorId: cursorAtTime.cursorId,
+          });
+        }
+      }
+    },
+    [recordingBundle?.mouseMoves, smoothingEnabled],
+  );
 
   // Initialize cursor smoother
   useEffect(() => {
@@ -99,6 +155,9 @@ export default function EditorView() {
         // Convert paths to asset URLs
         setVideoSrc(convertFileSrc(bundle.videoPath));
 
+        if (bundle.webcamVideoPath) {
+          setWebcamSrc(convertFileSrc(bundle.webcamVideoPath));
+        }
         if (bundle.micAudioPath) {
           setMicAudioSrc(convertFileSrc(bundle.micAudioPath));
         }
@@ -123,6 +182,35 @@ export default function EditorView() {
     loadRecording();
   }, []);
 
+  // Set initial cursor position when recording bundle loads
+  useEffect(() => {
+    if (!recordingBundle?.mouseMoves?.length) {
+      return;
+    }
+
+    // Get the initial cursor position at time 0
+    updateCursorForTime(0, true);
+  }, [recordingBundle, updateCursorForTime]);
+
+  // Update cursor position when seeking while paused
+  useEffect(() => {
+    // Only run when paused - animation loop handles playback
+    if (isPlaying) {
+      return;
+    }
+
+    if (!recordingBundle?.mouseMoves?.length) {
+      return;
+    }
+
+    updateCursorForTime(currentTime, true);
+  }, [
+    currentTime,
+    isPlaying,
+    recordingBundle?.mouseMoves,
+    updateCursorForTime,
+  ]);
+
   // Measure preview container size
   useEffect(() => {
     const updateSize = () => {
@@ -145,6 +233,23 @@ export default function EditorView() {
       }
       lastAnimationTimeRef.current = 0;
       return;
+    }
+
+    // When playback starts, ensure smoother is initialized at current cursor position
+    const videoTime = videoRef.current
+      ? videoRef.current.currentTime * 1000
+      : 0;
+    const initialCursor = findCursorAtTime(
+      recordingBundle.mouseMoves,
+      videoTime,
+    );
+    if (initialCursor && smootherRef.current) {
+      console.log("Playback starting: resetting smoother to", {
+        x: initialCursor.x,
+        y: initialCursor.y,
+        videoTime,
+      });
+      smootherRef.current.reset(initialCursor.x, initialCursor.y);
     }
 
     const animate = (timestamp: number) => {
@@ -188,6 +293,21 @@ export default function EditorView() {
             rawY: rawMove.y,
             cursorId: rawMove.cursorId,
           };
+        }
+
+        // Debug: log when smoothed position differs significantly from raw
+        const diff = Math.sqrt(
+          Math.pow(newPosition.x - newPosition.rawX, 2) +
+            Math.pow(newPosition.y - newPosition.rawY, 2),
+        );
+        if (diff > 50) {
+          console.warn("Animation loop: large smoothing diff", {
+            videoTime,
+            deltaMs,
+            raw: { x: newPosition.rawX, y: newPosition.rawY },
+            smoothed: { x: newPosition.x, y: newPosition.y },
+            diff,
+          });
         }
 
         setCursorPosition(newPosition);
@@ -322,6 +442,21 @@ export default function EditorView() {
 
   return (
     <div className="h-screen flex flex-col bg-[#1a1a1a]">
+      {/* Header Bar */}
+      <div className="flex items-center justify-between px-4 py-2 border-b border-[#333]">
+        <span className="text-sm text-white/60">
+          {project?.name || "Untitled Recording"}
+        </span>
+        <button
+          type="button"
+          onClick={() => setShowExportDialog(true)}
+          className="flex items-center gap-2 bg-red-500 hover:bg-red-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium transition-colors"
+        >
+          <Download className="w-4 h-4" />
+          Export
+        </button>
+      </div>
+
       {/* Main Preview Area */}
       <div className="flex-1 flex items-center justify-center p-8">
         <div
@@ -374,6 +509,19 @@ export default function EditorView() {
                   : "No recording loaded"}
               </p>
             </div>
+          )}
+
+          {/* Webcam Overlay */}
+          {webcamSrc && recordingBundle && (
+            <WebcamOverlay
+              webcamSrc={webcamSrc}
+              currentTimeMs={currentTime}
+              isPlaying={isPlaying}
+              videoWidth={videoWidth}
+              videoHeight={videoHeight}
+              containerWidth={previewSize.width}
+              containerHeight={previewSize.height}
+            />
           )}
 
           {/* Click Indicator */}
@@ -484,6 +632,15 @@ export default function EditorView() {
           </span>
         </div>
       </div>
+
+      {/* Export Dialog */}
+      <ExportDialog
+        isOpen={showExportDialog}
+        onClose={() => setShowExportDialog(false)}
+        recordingPath={recordingPath}
+        projectName={project?.name || "Untitled Recording"}
+        durationMs={duration}
+      />
     </div>
   );
 }

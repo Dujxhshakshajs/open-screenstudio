@@ -60,6 +60,7 @@ export interface RecordingBundle {
   // Paths
   bundlePath: string;
   videoPath: string;
+  webcamVideoPath: string | null;
   micAudioPath: string | null;
   systemAudioPath: string | null;
 

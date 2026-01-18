@@ -98,13 +98,20 @@ export function CursorOverlay({
   const rawX = position.rawX * retinaScale * scale + offsetX;
   const rawY = position.rawY * retinaScale * scale + offsetY;
 
-  // Debug logging
+  // Debug logging - check if cursor would be off-screen
+  const isOffScreen =
+    smoothedX < 0 ||
+    smoothedX > containerWidth ||
+    smoothedY < 0 ||
+    smoothedY > containerHeight;
+
   console.log("CursorOverlay debug:", {
     position: { x: position.x, y: position.y, cursorId: position.cursorId },
     videoSize: { videoWidth, videoHeight },
     containerSize: { containerWidth, containerHeight },
     retinaScale,
     calculated: { scale, offsetX, offsetY, smoothedX, smoothedY },
+    isOffScreen,
     cursorInfo,
     hasValidCursorImage: !!cursorImageUrls[position.cursorId],
   });

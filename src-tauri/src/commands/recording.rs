@@ -408,6 +408,7 @@ pub struct CursorInfo {
 pub struct RecordingBundle {
     pub bundle_path: String,
     pub video_path: String,
+    pub webcam_video_path: Option<String>,
     pub mic_audio_path: Option<String>,
     pub system_audio_path: Option<String>,
     pub mouse_moves: Vec<MouseMoveEvent>,
@@ -474,20 +475,27 @@ pub async fn load_recording_bundle(bundle_path: String) -> Result<RecordingBundl
         HashMap::new()
     };
     
-    // Find audio files
+    // Find webcam and audio files
+    let webcam_video_path = recording_dir.join("recording-0-webcam.mp4");
     let mic_audio_path = recording_dir.join("recording-0-mic.m4a");
     let system_audio_path = recording_dir.join("recording-0-system.m4a");
     
     tracing::info!(
-        "Loaded recording bundle: {} mouse moves, {} clicks, {} cursors",
+        "Loaded recording bundle: {} mouse moves, {} clicks, {} cursors, webcam={}",
         mouse_moves.len(),
         mouse_clicks.len(),
-        cursors.len()
+        cursors.len(),
+        webcam_video_path.exists()
     );
     
     Ok(RecordingBundle {
         bundle_path: bundle_path.clone(),
         video_path: video_path.to_string_lossy().to_string(),
+        webcam_video_path: if webcam_video_path.exists() {
+            Some(webcam_video_path.to_string_lossy().to_string())
+        } else {
+            None
+        },
         mic_audio_path: if mic_audio_path.exists() {
             Some(mic_audio_path.to_string_lossy().to_string())
         } else {

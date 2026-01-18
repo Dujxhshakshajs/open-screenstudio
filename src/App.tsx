@@ -56,7 +56,7 @@ function App() {
     return <RecordingToolbar />;
   }
 
-  // Render just the EditorView for editor window (minimal, no sidebar)
+  // Render the editor view for editor window
   return <EditorView />;
 }
 

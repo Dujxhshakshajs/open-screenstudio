@@ -5,14 +5,13 @@
 
 pub mod capture;
 pub mod commands;
+pub mod export;
 pub mod processing;
 pub mod project;
 pub mod recorder;
 pub mod utils;
 
-// These modules will be implemented in later phases
-// pub mod export;
-
+use commands::export::ExportState;
 use commands::recording::RecorderState;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -35,6 +34,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(RecorderState::default())
+        .manage(ExportState::default())
         .invoke_handler(tauri::generate_handler![
             // Project commands
             commands::project::create_project,
@@ -71,6 +71,10 @@ pub fn run() {
             commands::window::get_window_label,
             commands::window::minimize_toolbar,
             commands::window::restore_toolbar,
+            // Export commands
+            commands::export::start_export,
+            commands::export::cancel_export,
+            commands::export::is_exporting,
         ])
         .setup(|app| {
             // Set up transparent background for toolbar window on macOS
