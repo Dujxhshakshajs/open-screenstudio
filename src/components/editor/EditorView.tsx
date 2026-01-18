@@ -9,6 +9,7 @@ import {
 import ExportDialog from "../export/ExportDialog";
 import { useProjectStore } from "../../stores/projectStore";
 import { usePlaybackStore } from "../../stores/playbackStore";
+import { useEditorStore } from "../../stores/editorStore";
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { convertFileSrc } from "@tauri-apps/api/core";
@@ -518,6 +519,122 @@ export default function EditorView() {
     },
     [currentTimeMs, totalDurationMs, recordingBundle, handleSeek],
   );
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger shortcuts when typing in inputs
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement
+      ) {
+        return;
+      }
+
+      const { setActiveTool, selectedSliceId } = useEditorStore.getState();
+      const { removeSlice, splitSlice, activeSceneIndex } =
+        useProjectStore.getState();
+
+      switch (e.key) {
+        case " ": // Space - play/pause
+          e.preventDefault();
+          handlePlayPause();
+          break;
+
+        case "ArrowLeft":
+          e.preventDefault();
+          if (e.shiftKey) {
+            // Shift+Left - seek back 1 second
+            handleSeek(Math.max(0, currentTimeMs - 1000));
+          } else {
+            // Left - previous frame
+            handleFrameStep("back");
+          }
+          break;
+
+        case "ArrowRight":
+          e.preventDefault();
+          if (e.shiftKey) {
+            // Shift+Right - seek forward 1 second
+            handleSeek(Math.min(totalDurationMs, currentTimeMs + 1000));
+          } else {
+            // Right - next frame
+            handleFrameStep("forward");
+          }
+          break;
+
+        case "s":
+        case "S":
+          // S - split at playhead or activate split tool
+          if (e.shiftKey) {
+            setActiveTool("split");
+          } else {
+            // Split the slice at current playhead position
+            const sliceInfos = slices.map((slice, index) => {
+              let outputStart = 0;
+              for (let i = 0; i < index; i++) {
+                const s = slices[i];
+                outputStart += (s.sourceEndMs - s.sourceStartMs) / s.timeScale;
+              }
+              const duration =
+                (slice.sourceEndMs - slice.sourceStartMs) / slice.timeScale;
+              return { slice, outputStart, outputEnd: outputStart + duration };
+            });
+
+            for (const info of sliceInfos) {
+              if (
+                currentTimeMs >= info.outputStart &&
+                currentTimeMs < info.outputEnd
+              ) {
+                splitSlice(activeSceneIndex, info.slice.id, currentTimeMs);
+                break;
+              }
+            }
+          }
+          break;
+
+        case "v":
+        case "V":
+          // V - select tool
+          setActiveTool("select");
+          break;
+
+        case "t":
+        case "T":
+          // T - trim tool
+          setActiveTool("trim");
+          break;
+
+        case "Delete":
+        case "Backspace":
+          // Delete - remove selected slice
+          if (selectedSliceId && slices.length > 1) {
+            removeSlice(activeSceneIndex, selectedSliceId);
+          }
+          break;
+
+        case "Home":
+          e.preventDefault();
+          handleSeek(0);
+          break;
+
+        case "End":
+          e.preventDefault();
+          handleSeek(totalDurationMs);
+          break;
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [
+    currentTimeMs,
+    totalDurationMs,
+    slices,
+    handlePlayPause,
+    handleSeek,
+    handleFrameStep,
+  ]);
 
   const formatTime = (ms: number): string => {
     const totalSeconds = Math.floor(ms / 1000);
