@@ -251,8 +251,33 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   // Initialize project with a default scene from recording duration
   initializeFromRecording: (durationMs: number) => {
-    const { project } = get();
-    if (!project) return;
+    let { project } = get();
+
+    // Create a new project if one doesn't exist
+    if (!project) {
+      const now = new Date().toISOString();
+      project = {
+        id: generateId(),
+        name: "Untitled Recording",
+        createdAt: now,
+        config: { ...defaultConfig },
+        scenes: [],
+      };
+
+      const meta: ProjectMeta = {
+        version: "0.1.0",
+        format: "osp-v1",
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      set({ project, meta });
+    }
+
+    // Don't reinitialize if scenes already exist
+    if (project.scenes.length > 0) {
+      return;
+    }
 
     // Create a default scene with one slice covering the entire recording
     const defaultScene: Scene = {
