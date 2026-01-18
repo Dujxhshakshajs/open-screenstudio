@@ -10,7 +10,6 @@ pub mod processing;
 pub mod project;
 pub mod recorder;
 pub mod utils;
-pub mod waveform;
 
 use commands::export::ExportState;
 use commands::project::AppState;
@@ -82,11 +81,8 @@ pub fn run() {
             commands::window::restore_toolbar,
             // Export commands
             commands::export::start_export,
-            commands::export::start_export_with_edits,
             commands::export::cancel_export,
             commands::export::is_exporting,
-            // Waveform commands
-            waveform::get_waveform,
         ])
         .setup(|app| {
             // Set up transparent background for toolbar window on macOS

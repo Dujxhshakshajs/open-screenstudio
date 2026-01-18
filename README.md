@@ -124,6 +124,15 @@ Check our [GitHub Issues](https://github.com/crafter-station/open-screenstudio/i
 
 ---
 
+## Development Requirements
+
+| Platform | Requirement |
+|----------|-------------|
+| **macOS** | Xcode 16.2+ (macOS 15.2 SDK) |
+| **Windows** | Visual Studio 2022 with C++ tools |
+
+---
+
 ## Contributing
 
 We welcome contributions of all kinds! Whether you're fixing bugs, adding features, improving documentation, or just sharing ideas - you're helping build something great.
