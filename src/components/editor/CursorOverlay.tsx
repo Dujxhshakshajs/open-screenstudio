@@ -126,8 +126,7 @@ export function CursorOverlay({
   const hotspotOffsetY = cursorInfo ? cursorInfo.hotspotY * cursorScale : 0;
 
   // Check if we have a valid cursor image URL
-  // DEBUG: Force fallback SVG cursor to test positioning
-  const hasValidCursorImage = false; // !!cursorImageUrl;
+  const hasValidCursorImage = !!cursorImageUrl;
 
   return (
     <div className="absolute inset-0 pointer-events-none">
