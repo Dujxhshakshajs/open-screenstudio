@@ -47,6 +47,9 @@ urlencoding = "2"
 # Audio
 cpal = "0.15"
 
+# Webcam
+nokhwa = { version = "0.10", features = ["input-native"] }
+
 # Platform: macOS
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.5"

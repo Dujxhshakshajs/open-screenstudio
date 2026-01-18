@@ -44,6 +44,12 @@ interface AudioDeviceInfo {
   isDefault: boolean;
 }
 
+interface CameraInfo {
+  id: string;
+  name: string;
+  supportedResolutions: { width: number; height: number }[];
+}
+
 export default function RecordingToolbar() {
   // Source selection
   const [sourceType, setSourceType] = useState<SourceType>("display");
@@ -57,7 +63,9 @@ export default function RecordingToolbar() {
   const [micEnabled, setMicEnabled] = useState(true);
   const [systemAudioEnabled, setSystemAudioEnabled] = useState(true);
   const [selectedMicId, setSelectedMicId] = useState<string | null>(null);
+  const [selectedCameraId, setSelectedCameraId] = useState<string | null>(null);
   const [audioDevices, setAudioDevices] = useState<AudioDeviceInfo[]>([]);
+  const [cameras, setCameras] = useState<CameraInfo[]>([]);
 
   // Dropdowns
   const [showCameraDropdown, setShowCameraDropdown] = useState(false);
@@ -104,6 +112,17 @@ export default function RecordingToolbar() {
         }
       } catch (err) {
         console.error("Failed to load audio devices:", err);
+      }
+
+      // Load cameras
+      try {
+        const cameraList = await invoke<CameraInfo[]>("get_cameras");
+        setCameras(cameraList);
+        if (cameraList.length > 0) {
+          setSelectedCameraId(cameraList[0].id);
+        }
+      } catch (err) {
+        console.error("Failed to load cameras:", err);
       }
     };
 
@@ -167,7 +186,7 @@ export default function RecordingToolbar() {
           captureMicrophone: micEnabled,
           microphoneDeviceId: micEnabled ? selectedMicId : null,
           captureWebcam: cameraEnabled,
-          webcamDeviceId: null,
+          webcamDeviceId: cameraEnabled ? selectedCameraId : null,
           trackInput: true,
           outputDir,
         },
@@ -390,9 +409,33 @@ export default function RecordingToolbar() {
 
           {showCameraDropdown && (
             <div className="dropdown">
-              <div className="dropdown-item">
-                <span className="text-xs opacity-60">No cameras detected</span>
-              </div>
+              {cameras.length > 0 ? (
+                cameras.map((camera) => (
+                  <button
+                    key={camera.id}
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedCameraId(camera.id);
+                      setCameraEnabled(true);
+                      setShowCameraDropdown(false);
+                    }}
+                    className={`dropdown-item ${selectedCameraId === camera.id ? "active" : ""}`}
+                  >
+                    <Camera className="w-4 h-4" />
+                    <span className="truncate">{camera.name}</span>
+                    {selectedCameraId === camera.id && (
+                      <Check className="w-4 h-4 text-green-400 ml-2" />
+                    )}
+                  </button>
+                ))
+              ) : (
+                <div className="dropdown-item">
+                  <span className="text-xs opacity-60">
+                    No cameras detected
+                  </span>
+                </div>
+              )}
             </div>
           )}
         </div>

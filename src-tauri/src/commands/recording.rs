@@ -1,7 +1,7 @@
 //! Recording-related Tauri commands
 
 use crate::capture::audio::get_audio_input_devices;
-use crate::capture::traits::{AudioDeviceInfo, DisplayInfo, has_screen_recording_permission, request_screen_recording_permission};
+use crate::capture::traits::{AudioDeviceInfo, CameraInfo, DisplayInfo, has_screen_recording_permission, request_screen_recording_permission};
 use crate::recorder::state::{RecordingConfig, RecordingResult as RecordingOutput, RecordingState};
 use crate::recorder::RecordingCoordinator;
 use std::sync::Arc;
@@ -25,6 +25,65 @@ impl Default for RecorderState {
 #[tauri::command]
 pub async fn get_audio_devices() -> Result<Vec<AudioDeviceInfo>, String> {
     Ok(get_audio_input_devices())
+}
+
+/// Get list of available cameras/webcams
+#[tauri::command]
+pub async fn get_cameras() -> Result<Vec<CameraInfo>, String> {
+    #[cfg(target_os = "macos")]
+    {
+        Ok(crate::capture::macos::webcam::get_cameras())
+    }
+    
+    #[cfg(target_os = "windows")]
+    {
+        // TODO: Implement Windows camera enumeration
+        Ok(vec![])
+    }
+    
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        Ok(vec![])
+    }
+}
+
+/// Check if camera permission is granted
+#[tauri::command]
+pub async fn check_camera_permission() -> Result<bool, String> {
+    #[cfg(target_os = "macos")]
+    {
+        Ok(crate::capture::macos::permissions::has_camera_permission())
+    }
+    
+    #[cfg(target_os = "windows")]
+    {
+        // Windows handles permissions at runtime when accessing camera
+        Ok(true)
+    }
+    
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        Ok(false)
+    }
+}
+
+/// Request camera permission
+#[tauri::command]
+pub async fn request_camera_permission() -> Result<bool, String> {
+    #[cfg(target_os = "macos")]
+    {
+        Ok(crate::capture::macos::permissions::request_camera_permission())
+    }
+    
+    #[cfg(target_os = "windows")]
+    {
+        Ok(true)
+    }
+    
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        Ok(false)
+    }
 }
 
 /// Check if system audio capture is available
@@ -135,6 +194,27 @@ pub async fn start_recording(
         {
             let system_audio_channel = Box::new(crate::capture::windows::system_audio::SystemAudioCaptureChannel::new());
             coordinator.add_channel(system_audio_channel);
+        }
+    }
+    
+    // Add webcam channel if enabled
+    if config.capture_webcam {
+        #[cfg(target_os = "macos")]
+        {
+            // Default to 1280x720 @ 30fps for webcam
+            let webcam_channel = Box::new(crate::capture::macos::webcam::WebcamCaptureChannel::new(
+                config.webcam_device_id.clone(),
+                1280,
+                720,
+                30,
+            ));
+            coordinator.add_channel(webcam_channel);
+        }
+        
+        #[cfg(target_os = "windows")]
+        {
+            // TODO: Implement Windows webcam capture
+            tracing::warn!("Webcam capture not yet implemented on Windows");
         }
     }
     

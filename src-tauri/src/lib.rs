@@ -46,9 +46,12 @@ pub fn run() {
             // Recording commands
             commands::recording::get_displays,
             commands::recording::get_audio_devices,
+            commands::recording::get_cameras,
             commands::recording::check_system_audio_available,
             commands::recording::check_screen_permission,
             commands::recording::request_screen_permission,
+            commands::recording::check_camera_permission,
+            commands::recording::request_camera_permission,
             commands::recording::start_recording,
             commands::recording::stop_recording,
             commands::recording::pause_recording,
