@@ -382,6 +382,7 @@ export default function EditorView() {
   }, [isPlaying, recordingBundle, smoothingEnabled]);
 
   // Sync audio with video
+  // Using 20ms threshold instead of 100ms to catch smaller drifts
   const syncAudio = useCallback(() => {
     if (!videoRef.current) return;
 
@@ -389,14 +390,14 @@ export default function EditorView() {
 
     if (micAudioRef.current) {
       const diff = Math.abs(micAudioRef.current.currentTime - videoTime);
-      if (diff > 0.1) {
+      if (diff > 0.02) {
         micAudioRef.current.currentTime = videoTime;
       }
     }
 
     if (systemAudioRef.current) {
       const diff = Math.abs(systemAudioRef.current.currentTime - videoTime);
-      if (diff > 0.1) {
+      if (diff > 0.02) {
         systemAudioRef.current.currentTime = videoTime;
       }
     }
@@ -412,10 +413,20 @@ export default function EditorView() {
       systemAudioRef.current?.pause();
       pause();
     } else {
+      // Sync audio positions to video before playing
       syncAudio();
-      await videoRef.current.play();
-      micAudioRef.current?.play();
-      systemAudioRef.current?.play();
+
+      // Start all media elements together
+      // The sync happens through currentTime alignment, not through waiting
+      try {
+        await Promise.all([
+          videoRef.current.play(),
+          micAudioRef.current?.play(),
+          systemAudioRef.current?.play(),
+        ]);
+      } catch {
+        // Ignore autoplay errors
+      }
       play();
     }
   }, [isPlaying, syncAudio, play, pause]);
@@ -653,16 +664,16 @@ export default function EditorView() {
   const videoHeight = recordingBundle?.videoMetadata.height || 1080;
 
   return (
-    <div className="h-screen flex flex-col bg-[--background]">
+    <div className="h-screen flex flex-col bg-background">
       {/* Header Bar */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-[--border]">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-border">
         <div className="flex items-center gap-4">
-          <span className="text-sm text-[--foreground]/60">
+          <span className="text-sm text-foreground/60">
             {project?.name || "Untitled Recording"}
           </span>
           {projectPath && (
             <span
-              className="text-xs text-[--foreground]/30 truncate max-w-[200px]"
+              className="text-xs text-foreground/30 truncate max-w-[200px]"
               title={projectPath}
             >
               {projectPath.split("/").pop()}
@@ -674,7 +685,7 @@ export default function EditorView() {
           <button
             type="button"
             onClick={() => openProject()}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-[--foreground]/70 hover:text-[--foreground] hover:bg-[--accent] transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-foreground/70 hover:text-foreground hover:bg-accent transition-colors"
             title="Open Project (Cmd+O)"
           >
             <FolderOpen className="w-4 h-4" />
@@ -797,10 +808,10 @@ export default function EditorView() {
       )}
 
       {/* Playback Controls */}
-      <div className="bg-[--muted] border-t border-[--border]">
+      <div className="bg-muted border-t border-border">
         <div className="flex items-center justify-center gap-6 py-3">
           {/* Time display */}
-          <span className="text-[--foreground]/60 text-sm font-mono w-20 text-right">
+          <span className="text-foreground/60 text-sm font-mono w-20 text-right">
             {formatTime(currentTimeMs)}
           </span>
 
@@ -809,7 +820,7 @@ export default function EditorView() {
             <button
               type="button"
               onClick={() => handleFrameStep("back")}
-              className="p-2 rounded-full hover:bg-[--accent] text-[--foreground]/70 hover:text-[--foreground] transition-colors"
+              className="p-2 rounded-full hover:bg-accent text-foreground/70 hover:text-foreground transition-colors"
               title="Previous Frame"
             >
               <SkipBack className="w-5 h-5" />
@@ -819,7 +830,7 @@ export default function EditorView() {
               type="button"
               onClick={handlePlayPause}
               disabled={!videoSrc}
-              className="p-4 rounded-full bg-[--foreground] text-[--background] hover:opacity-90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="p-4 rounded-full bg-foreground text-background hover:opacity-90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               title={isPlaying ? "Pause" : "Play"}
             >
               {isPlaying ? (
@@ -832,7 +843,7 @@ export default function EditorView() {
             <button
               type="button"
               onClick={() => handleFrameStep("forward")}
-              className="p-2 rounded-full hover:bg-[--accent] text-[--foreground]/70 hover:text-[--foreground] transition-colors"
+              className="p-2 rounded-full hover:bg-accent text-foreground/70 hover:text-foreground transition-colors"
               title="Next Frame"
             >
               <SkipForward className="w-5 h-5" />
@@ -840,7 +851,7 @@ export default function EditorView() {
           </div>
 
           {/* Duration display */}
-          <span className="text-[--foreground]/60 text-sm font-mono w-20">
+          <span className="text-foreground/60 text-sm font-mono w-20">
             {formatTime(totalDurationMs || recordingDuration)}
           </span>
         </div>

@@ -115,9 +115,15 @@ impl RecordingCoordinator {
         let session = RecordingSession::new(0, 0.0);
         self.sessions.push(session);
         
-        // Initialize and start all channels
+        // Two-phase channel startup for synchronized recording:
+        // Phase 1: Initialize all channels (device checks, config, no FFmpeg yet)
         for channel in &mut self.channels {
             channel.initialize(&recording_dir, 0).await?;
+        }
+        
+        // Phase 2: Start all channels (FFmpeg spawns happen here, close together)
+        // This ensures all encoders start at nearly the same time for proper A/V sync
+        for channel in &mut self.channels {
             channel.start().await?;
         }
         

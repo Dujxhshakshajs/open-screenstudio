@@ -351,7 +351,7 @@ impl RecordingChannel for SystemAudioCaptureChannel {
                 |e| RecordingError::CaptureError(format!("Failed to start audio encoder: {}", e)),
             )?,
         );
-        *self.encoder.lock() = Some(encoder.clone());
+        *self.encoder.lock() = Some(encoder);
 
         self.is_recording.store(true, Ordering::SeqCst);
         self.sample_count.store(0, Ordering::SeqCst);
