@@ -64,7 +64,10 @@ core-graphics = "0.24"
 cocoa = "0.26"
 dispatch = "0.2"
 # ScreenCaptureKit for native system audio capture (macOS 12.3+)
-screencapturekit = "1.5"
+# Note: Version 1.5 requires macOS SDK 15.2+, but we only have SDK 15.0
+# Temporarily disabled until Xcode is updated to include macOS SDK 15.2+
+# To re-enable: uncomment the line below and update Xcode
+# screencapturekit = "1.5"
 # Note: screencapturekit crate has Swift runtime issues on some systems
 # Using CGWindowListCreateImage for now as a simpler fallback
 
