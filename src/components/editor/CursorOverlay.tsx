@@ -89,17 +89,21 @@ export function CursorOverlay({
   );
 
   // Convert video coordinates to container coordinates
-  // Coordinates from recording are already in video pixel space (Rust applies scale_factor)
-  const smoothedX = position.x * scale + offsetX;
-  const smoothedY = position.y * scale + offsetY;
-  const rawX = position.rawX * scale + offsetX;
-  const rawY = position.rawY * scale + offsetY;
+  // BUG WORKAROUND: Coordinates from recording are in LOGICAL space (not pixel space)
+  // despite the Rust code attempting to scale them. Apply 2x for Retina displays.
+  // TODO: Fix the Rust capture to actually store pixel coordinates, or store scale_factor in metadata
+  const retinaScale = 2; // Retina displays use 2x scaling
+  const smoothedX = position.x * retinaScale * scale + offsetX;
+  const smoothedY = position.y * retinaScale * scale + offsetY;
+  const rawX = position.rawX * retinaScale * scale + offsetX;
+  const rawY = position.rawY * retinaScale * scale + offsetY;
 
   // Debug logging
   console.log("CursorOverlay debug:", {
     position: { x: position.x, y: position.y, cursorId: position.cursorId },
     videoSize: { videoWidth, videoHeight },
     containerSize: { containerWidth, containerHeight },
+    retinaScale,
     calculated: { scale, offsetX, offsetY, smoothedX, smoothedY },
     cursorInfo,
     hasValidCursorImage: !!cursorImageUrls[position.cursorId],
