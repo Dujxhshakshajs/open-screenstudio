@@ -206,14 +206,18 @@ pub async fn create_project_from_recording(
         camera_position: Point { x: 0.95, y: 0.95 },
     };
 
+    // Combine screen and camera slices into a single slices list
+    let mut slices = vec![screen_slice];
+    if let Some(cam_slice) = camera_slice {
+        slices.push(cam_slice);
+    }
+
     let scene = Scene {
         id: Uuid::new_v4().to_string(),
         name: "Main".to_string(),
         scene_type: SceneType::Recording,
         session_index: 0,
-        slices: Vec::new(), // Deprecated field
-        screen_slices: vec![screen_slice],
-        camera_slices: camera_slice.map(|s| vec![s]).unwrap_or_default(),
+        slices,
         zoom_ranges: Vec::new(),
         layouts: vec![default_layout],
     };
